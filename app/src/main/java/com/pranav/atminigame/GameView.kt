@@ -39,6 +39,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
     private var vy = 0f
     private var grounded = false
     private var score = 0
+    private var orbsCollected = 0
     private var cameraX = 0f
     private var gameOver = false
     private var leftPressed = false
@@ -81,6 +82,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         vy = 0f
         grounded = false
         score = 0
+        orbsCollected = 0
         cameraX = 0f
         gameOver = false
         orbs.clear()
@@ -161,7 +163,10 @@ class GameView(context: Context, var aiController: AiController?) : View(context
                     } else {
                         val charCenterX = x + (sprite.width * 0.42f) / 2f
                         val dxToTarget = tx - charCenterX
-                        if (abs(dxToTarget) <= 40f) {
+                        if (abs(dxToTarget) <= 25f) {
+                            vx = 0f
+                            leftPressed = false
+                            rightPressed = false
                             aiPhase = AiPhase.DECIDE_JUMP
                         }
                     }
@@ -197,16 +202,12 @@ class GameView(context: Context, var aiController: AiController?) : View(context
             val tx = aiTargetX
             val ty = aiTargetY
             if (aiPhase == AiPhase.MOVING && tx != null && ty != null) {
-                val dxToTarget = tx - x
+                val charCenterX = x + (sprite.width * 0.42f) / 2f
+                val dxToTarget = tx - charCenterX
                 val absDx = abs(dxToTarget)
                 when {
-                    absDx <= 10f -> {
-                        x = tx
+                    absDx <= 25f -> {
                         vx = 0f
-                        leftPressed = false
-                        rightPressed = false
-                    }
-                    absDx <= 100f -> {
                         leftPressed = false
                         rightPressed = false
                     }
@@ -240,14 +241,11 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         if (jumpPressed && grounded) {
             vy = -1050f
             grounded = false
+            jumpPressed = false
             soundManager.playJump()
             val charW = sprite.width * 0.42f
             val charH = sprite.height * 0.42f
             particleSystem.emitJumpThruster(x + charW / 2f, y + charH)
-        }
-
-        if (!isAutoMode) {
-            jumpPressed = false
         }
 
         vy += 2300f * dt
@@ -277,6 +275,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
             if (!orb.taken && abs(orb.x - charCenterX) < 65f && abs(orb.y - charCenterY) < 100f) {
                 orb.taken = true
                 score += if (orb.isBig) 5 else 1
+                orbsCollected++
                 soundManager.playCollectOrb(orb.isBig)
                 particleSystem.emitOrbCollect(orb.x, orb.y, orb.isBig)
                 visualEffects.addShockwave(orb.x, orb.y, orb.isBig)
@@ -372,7 +371,8 @@ class GameView(context: Context, var aiController: AiController?) : View(context
             canvas.drawText("ATMINI", 28f, 58f, textPaint)
         }
         textPaint.textSize = 34f
-        canvas.drawText("Orbs: $score / 30", 30f, 102f, textPaint)
+        canvas.drawText("Orbs: $orbsCollected / 30", 30f, 102f, textPaint)
+        canvas.drawText("Score: $score", 30f, 142f, textPaint)
 
         // On-screen Buttons
         drawButton(canvas, 20f, height - 160f, 140f, height - 20f, "◀")
