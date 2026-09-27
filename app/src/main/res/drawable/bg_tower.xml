@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="200dp"
+    android:height="400dp"
+    android:viewportWidth="200"
+    android:viewportHeight="400">
+    <!-- Opaque Solid Dark Tower Structure -->
+    <path
+        android:fillColor="#1C1428"
+        android:pathData="M0,0 h200 v400 h-200 z" />
+    <!-- Blinking Sentinel Beacon Light -->
+    <path
+        android:fillColor="#FF1E32"
+        android:pathData="M100,25 m-8,0 a8,8 0,1 1,16 0 a8,8 0,1 1,-16 0" />
+</vector>

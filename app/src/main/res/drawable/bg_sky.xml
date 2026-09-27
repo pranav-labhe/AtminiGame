@@ -1,0 +1,64 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="200dp"
+    android:height="400dp"
+    android:viewportWidth="200"
+    android:viewportHeight="400">
+    <!-- Atmospheric Toxic Smog Sky Gradient Base Layer 1 -->
+    <path
+        android:fillColor="#08040B"
+        android:pathData="M0,0 h200 v400 h-200 z" />
+    <!-- Layer 2: Deep Purple Stratosphere Gradient -->
+    <path
+        android:fillColor="#1C0A1E"
+        android:pathData="M0,0 h200 v250 h-200 z" />
+    <!-- Layer 3: Acidic Upper Horizon Glow -->
+    <path
+        android:fillColor="#320C28"
+        android:fillAlpha="0.8"
+        android:pathData="M0,150 h200 v150 h-200 z" />
+    <!-- Distant Toxic Nebula Plasma Glow 1 -->
+    <path
+        android:fillColor="#8C1450"
+        android:fillAlpha="0.3"
+        android:pathData="M40,80 m-70,0 a70,50 0,1 1,140 0 a70,50 0,1 1,-140 0" />
+    <!-- Distant Toxic Nebula Plasma Glow 2 -->
+    <path
+        android:fillColor="#14508C"
+        android:fillAlpha="0.25"
+        android:pathData="M130,120 m-60,40 a60,40 0,1 1,120 0 a60,40 0,1 1,-120 0" />
+    <!-- Distant Toxic Nebula Plasma Glow 3 -->
+    <path
+        android:fillColor="#50148C"
+        android:fillAlpha="0.35"
+        android:pathData="M90,60 m-50,30 a50,30 0,1 1,100 0 a50,30 0,1 1,-100 0" />
+    <!-- Menacing Mega-Sentinel Surveillance Core 1 (Outer Crimson Halo) -->
+    <path
+        android:fillColor="#FF1E3C"
+        android:fillAlpha="0.4"
+        android:pathData="M160,70 m-50,0 a50,50 0,1 1,100 0 a50,50 0,1 1,-100 0" />
+    <!-- Menacing Mega-Sentinel Surveillance Core 2 (Inner Reactor Ring) -->
+    <path
+        android:fillColor="#FF1E3C"
+        android:fillAlpha="0.85"
+        android:pathData="M160,70 m-35,0 a35,35 0,1 1,70 0 a35,35 0,1 1,-70 0" />
+    <!-- Menacing Mega-Sentinel Surveillance Core 3 (White Hot Pupil) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.95"
+        android:pathData="M160,70 m-12,0 a12,12 0,1 1,24 0 a12,12 0,1 1,-24 0" />
+    <!-- Acidic Lower Smog Horizon Layer 1 -->
+    <path
+        android:fillColor="#321428"
+        android:fillAlpha="0.75"
+        android:pathData="M0,240 h200 v160 h-200 z" />
+    <!-- Acidic Lower Smog Horizon Layer 2 -->
+    <path
+        android:fillColor="#180A1A"
+        android:fillAlpha="0.85"
+        android:pathData="M0,290 h200 v110 h-200 z" />
+    <!-- Acidic Lower Smog Horizon Layer 3 -->
+    <path
+        android:fillColor="#0A040E"
+        android:fillAlpha="0.95"
+        android:pathData="M0,350 h200 v50 h-200 z" />
+</vector>

@@ -1,0 +1,66 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="60dp"
+    android:height="220dp"
+    android:viewportWidth="60"
+    android:viewportHeight="220">
+    <!-- Nanotech Spires & Data-Siphon Palms - Layer 1 -->
+    <path
+        android:fillColor="#0B0812"
+        android:pathData="M24,220 L28,20 L32,20 L36,220 z" />
+    <!-- Layer 2 -->
+    <path
+        android:fillColor="#181024"
+        android:pathData="M12,220 L18,60 L24,60 L20,220 z" />
+    <!-- Layer 3 -->
+    <path
+        android:fillColor="#120A1C"
+        android:pathData="M38,220 L36,50 L42,50 L48,220 z" />
+
+    <!-- Pulsing Data Node Conduits -->
+    <path
+        android:fillColor="#00E6FF"
+        android:fillAlpha="0.95"
+        android:pathData="M29,20 h2 v180 h-2 z" />
+    <path
+        android:fillColor="#FF00A0"
+        android:fillAlpha="0.85"
+        android:pathData="M20,60 h2 v160 h-2 z" />
+    <path
+        android:fillColor="#00FFB4"
+        android:fillAlpha="0.9"
+        android:pathData="M39,50 h2 v170 h-2 z" />
+
+    <!-- Pulsing Data Node Leaflets Group 1 -->
+    <path
+        android:fillColor="#FF0050"
+        android:pathData="M30,30 m-8,0 a8,8 0,1 1,16 0 a8,8 0,1 1,-16 0" />
+    <path
+        android:fillColor="#00FFFF"
+        android:fillAlpha="0.8"
+        android:pathData="M30,60 m-5,0 a5,5 0,1 1,10 0 a5,5 0,1 1,-10 0" />
+    <path
+        android:fillColor="#FF0050"
+        android:pathData="M30,90 m-6,0 a6,6 0,1 1,12 0 a6,6 0,1 1,-12 0" />
+
+    <!-- Pulsing Data Node Leaflets Group 2 -->
+    <path
+        android:fillColor="#00FFB4"
+        android:pathData="M21,80 m-6,0 a6,6 0,1 1,12 0 a6,6 0,1 1,-12 0" />
+    <path
+        android:fillColor="#FFD700"
+        android:pathData="M21,120 m-5,0 a5,5 0,1 1,10 0 a5,5 0,1 1,-10 0" />
+    <path
+        android:fillColor="#FF0050"
+        android:pathData="M21,150 m-6,0 a6,6 0,1 1,12 0 a6,6 0,1 1,-12 0" />
+
+    <!-- Pulsing Data Node Leaflets Group 3 -->
+    <path
+        android:fillColor="#FF00A0"
+        android:pathData="M40,70 m-7,0 a7,7 0,1 1,14 0 a7,7 0,1 1,-14 0" />
+    <path
+        android:fillColor="#00FFFF"
+        android:pathData="M40,110 m-5,0 a5,5 0,1 1,10 0 a5,5 0,1 1,-10 0" />
+    <path
+        android:fillColor="#FFD700"
+        android:pathData="M40,140 m-6,0 a6,6 0,1 1,12 0 a6,6 0,1 1,-12 0" />
+</vector>

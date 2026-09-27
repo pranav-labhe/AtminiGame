@@ -1,0 +1,71 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="180dp"
+    android:height="250dp"
+    android:viewportWidth="180"
+    android:viewportHeight="250">
+    <!-- Heavy Industrial Reinforced Steel Foundation - Layer 1 -->
+    <path
+        android:fillColor="#120E18"
+        android:pathData="M0,0 h180 v250 h-180 z" />
+    <!-- Layer 2: Sub-Plating Grid -->
+    <path
+        android:fillColor="#1E1628"
+        android:pathData="M0,30 h180 v220 h-180 z" />
+    <!-- Layer 3: Deep Foundation Sub-Base -->
+    <path
+        android:fillColor="#08060E"
+        android:pathData="M0,120 h180 v130 h-180 z" />
+
+    <!-- Glowing Hazard Plasma Edge Stripe 1 -->
+    <path
+        android:fillColor="#FF2850"
+        android:pathData="M0,0 h180 v10 h-180 z" />
+    <!-- Glowing Hazard Plasma Edge Stripe 2 (Warning Gold) -->
+    <path
+        android:fillColor="#FFD700"
+        android:fillAlpha="0.9"
+        android:pathData="M0,3 h180 v3 h-180 z" />
+    <!-- Glowing Hazard Plasma Edge Stripe 3 (Cyan Conduit Line) -->
+    <path
+        android:fillColor="#00E6FF"
+        android:fillAlpha="0.8"
+        android:pathData="M0,15 h180 v4 h-180 z" />
+
+    <!-- Riveted Metal Plate Grooves & Energy Trenches Group 1 -->
+    <path
+        android:fillColor="#241C30"
+        android:pathData="M12,24 h156 v14 h-156 z" />
+    <path
+        android:fillColor="#00E6FF"
+        android:fillAlpha="0.5"
+        android:pathData="M24,28 h132 v6 h-132 z" />
+
+    <!-- Riveted Metal Plate Grooves & Energy Trenches Group 2 -->
+    <path
+        android:fillColor="#181024"
+        android:pathData="M12,65 h156 v16 h-156 z" />
+    <path
+        android:fillColor="#FF3C78"
+        android:fillAlpha="0.6"
+        android:pathData="M24,70 h132 v6 h-132 z" />
+
+    <!-- Riveted Metal Plate Grooves & Energy Trenches Group 3 -->
+    <path
+        android:fillColor="#20182C"
+        android:pathData="M12,110 h156 v14 h-156 z" />
+    <path
+        android:fillColor="#00FFB4"
+        android:fillAlpha="0.55"
+        android:pathData="M24,114 h132 v6 h-132 z" />
+
+    <!-- Industrial Floor Access Hatches & Rivets -->
+    <path
+        android:fillColor="#0A0610"
+        android:pathData="M0,150 h180 v12 h-180 z" />
+    <path
+        android:fillColor="#0E0A14"
+        android:pathData="M0,190 h180 v12 h-180 z" />
+    <path
+        android:fillColor="#06040A"
+        android:pathData="M0,230 h180 v20 h-180 z" />
+</vector>

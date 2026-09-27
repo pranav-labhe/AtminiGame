@@ -1,0 +1,15 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="88dp"
+    android:height="88dp"
+    android:viewportWidth="88"
+    android:viewportHeight="88">
+    <!-- Outer Ethereal Spiritual Aura -->
+    <path
+        android:fillColor="#64DCFF"
+        android:fillAlpha="0.5"
+        android:pathData="M44,44 m-42,0 a42,42 0,1 1,84 0 a42,42 0,1 1,-84 0" />
+    <!-- Inner Luminous Core -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M44,44 m-18,0 a18,18 0,1 1,36 0 a18,18 0,1 1,-36 0" />
+</vector>
