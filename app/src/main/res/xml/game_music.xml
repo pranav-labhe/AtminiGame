@@ -3,50 +3,52 @@
 
     <!-- 1. Landing / Idle: Futuristic Sentinel - alert but at rest, standing guard -->
     <track id="landing" tempo="62" root="D" scale="phrygian">
-        <bass waveform="square" octave="2" volume="0.22" />
-        <pad waveform="sawtooth" attack="2.0" release="4.0" volume="0.25" wobble="0.2" />
+        <bass waveform="square" octave="2" volume="0.30" />
+        <pad waveform="sawtooth" octave="4" attack="2.0" release="4.0" volume="0.25" wobble="0.2" />
         <arpeggio pattern="2, 4, 7, 11, 3, 6, 10, 15, 1, 5, 8, 12, 4, 7, 11, 16" noteLength="eighth" volume="0.35" />
     </track>
 
     <!-- 2. Game Screen: Dystopian Future - gritty industrial wasteland, relentless sentinel patrol -->
     <track id="game" tempo="110" root="C" scale="locrian">
-        <bass waveform="sawtooth" octave="1" volume="0.55" />
+        <bass waveform="sawtooth" octave="2" volume="0.45" />
         <pad waveform="square"
+            octave="4"
             attack="0.3"
             release="1.2"
-            volume="0.35"
+            volume="0.30"
             wobble="0.85" />
         <arpeggio
             pattern="3, 5, 8, 12, 2, 6, 9, 14, 1, 4, 8, 13, 3, 7, 10, 15"
             noteLength="sixteenth"
-            volume="0.70" />
+            volume="0.65" />
     </track>
 
     <!-- 2b. AI Auto Mode: Dystopian Humanoid Sentinel - heavy cyberpunk combat synth, relentless threat tracking -->
     <track id="aimode" tempo="126" root="C" scale="phrygian">
-        <bass waveform="square" octave="1" volume="0.6" />
+        <bass waveform="square" octave="2" volume="0.50" />
         <pad waveform="sawtooth"
+            octave="4"
             attack="0.2"
             release="1.0"
-            volume="0.4"
+            volume="0.35"
             wobble="0.95" />
         <arpeggio
             pattern="1,4,7,11,14,11,7,4,2,5,8,12,15,12,8,5,3,6,9,13"
             noteLength="sixteenth"
-            volume="0.75" />
+            volume="0.70" />
     </track>
 
     <!-- 3. Success: Futuristic Sentinel - mission accomplished, disciplined not celebratory -->
     <track id="success" tempo="82" root="D" scale="mixolydian">
         <bass waveform="square" octave="2" volume="0.4" />
-        <pad waveform="sawtooth" attack="0.3" release="1.5" volume="0.28" />
+        <pad waveform="sawtooth" octave="4" attack="0.3" release="1.5" volume="0.28" />
         <arpeggio pattern="1,4,5,8,11" noteLength="sixteenth" volume="0.25" />
     </track>
 
     <!-- 4. Failure: Futuristic Sentinel - system down, breach, not sadness but alarm -->
     <track id="failure" tempo="64" root="D" scale="locrian">
-        <bass waveform="square" octave="0" volume="0.6" />
-        <pad waveform="sawtooth" attack="3.0" release="5.0" volume="0.12" />
+        <bass waveform="square" octave="2" volume="0.45" />
+        <pad waveform="sawtooth" octave="3" attack="3.0" release="5.0" volume="0.12" />
         <arpeggio pattern="1,2,1,5,1" noteLength="quarter" volume="0.08" />
     </track>
 

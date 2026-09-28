@@ -8,6 +8,7 @@ import com.pranav.atminigame.audio.model.TrackConfig
 import kotlinx.coroutines.*
 import kotlin.math.PI
 import kotlin.math.sin
+import kotlin.math.tanh
 
 /**
  * High-performance real-time procedural synthesizer engine.
@@ -32,6 +33,14 @@ class ProceduralMusicEngine(private val library: MusicLibrary) {
     // Background Synthesis Voices
     private var bassOsc: Oscillator = SquareWaveOscillator()
     private var currentBassWaveform = "square"
+    private val bassEnv = AdsrEnvelope().apply {
+        attackTime = 0.008f
+        decayTime = 0.12f
+        sustainLevel = 0.45f
+        releaseTime = 0.10f
+    }
+    private var bassLpfOut = 0f
+    private val bassLpfAlpha = 0.12f // 1-pole Low-Pass Filter (~1100 Hz cutoff) to tame high-frequency square wave fizz
 
     private var padOsc: Oscillator = SawtoothWaveOscillator()
     private var currentPadWaveform = "sawtooth"
@@ -89,10 +98,10 @@ class ProceduralMusicEngine(private val library: MusicLibrary) {
     private var delayWriteIdx = 0
     private var feedback = 0.32f
 
-    // DC Blocker & High-Pass
+    // DC Blocker & High-Pass (Cutoff ~20 Hz at 44.1 kHz)
     private var lastOut = 0f
     private var lastIn = 0f
-    private val hpAlpha = 0.975f
+    private val hpAlpha = 0.997f
 
     // Sequencer State
     private var sampleCount = 0L
@@ -206,7 +215,7 @@ class ProceduralMusicEngine(private val library: MusicLibrary) {
 
         if (config != null) {
             val baseBassFreq = ScaleHelper.rootToFrequency(config.root, config.bass.octave + 1)
-            val basePadFreq = ScaleHelper.rootToFrequency(config.root, config.bass.octave + 2)
+            val basePadFreq = ScaleHelper.rootToFrequency(config.root, config.pad.octave + 1)
 
             if (targetBassFreq != baseBassFreq) {
                 targetBassFreq = baseBassFreq
@@ -231,7 +240,19 @@ class ProceduralMusicEngine(private val library: MusicLibrary) {
                 else -> samplesPerBeat // quarter
             }
 
-            bassSample = bassOsc.nextSample(cachedBassFreq, sampleRate) * config.bass.volume
+            // Bass Rhythm Envelope Retriggering (eighth note pulse for clear note attacks)
+            val samplesPerBassStep = samplesPerBeat / 2
+            if (sampleCount % samplesPerBassStep.coerceAtLeast(1) == 0L) {
+                bassEnv.gate(true, retrigger = true)
+            } else if (sampleCount % samplesPerBassStep.coerceAtLeast(1) == (samplesPerBassStep * 0.70f).toLong()) {
+                bassEnv.gate(false)
+            }
+
+            val rawBass = bassOsc.nextSample(cachedBassFreq, sampleRate) * bassEnv.nextLevel(sampleRate) * config.bass.volume
+            // Low-pass filter to smooth square wave edges and tame high-frequency buzz
+            bassLpfOut += (rawBass - bassLpfOut) * bassLpfAlpha
+            bassSample = bassLpfOut
+
             padSample = padOsc.nextSample(cachedPadFreq + wobbleOffset, sampleRate) * padEnv.nextLevel(sampleRate) * config.pad.volume
 
             val arpStep = (sampleCount / samplesPerArp.coerceAtLeast(1)).toInt()
@@ -315,9 +336,9 @@ class ProceduralMusicEngine(private val library: MusicLibrary) {
         delayWriteIdx = (delayWriteIdx + 1) % delayBuffer.size
 
         // Total Mix
-        val mixed = (bassSample * 0.38f) + spatialOut + (drySfx * 0.85f)
+        val mixed = (bassSample * 0.42f) + spatialOut + (drySfx * 0.85f)
 
-        // DC High-Pass Filter
+        // DC High-Pass Filter (Cutoff ~20 Hz)
         val out = hpAlpha * (lastOut + mixed - lastIn)
         lastIn = mixed
         lastOut = out
@@ -326,13 +347,8 @@ class ProceduralMusicEngine(private val library: MusicLibrary) {
     }
 
     private fun softLimit(x: Float): Float {
-        return if (x > 0.7f) {
-            0.7f + (x - 0.7f) * 0.3f / (1f + (x - 0.7f))
-        } else if (x < -0.7f) {
-            -0.7f + (x + 0.7f) * 0.3f / (1f + (-x - 0.7f))
-        } else {
-            x
-        }.coerceIn(-0.95f, 0.95f)
+        // Continuous, smooth hyperbolic tangent limiter without hard knee discontinuities
+        return tanh(x.toDouble()).toFloat()
     }
 
     // --- Dynamic Sound Effects API ---

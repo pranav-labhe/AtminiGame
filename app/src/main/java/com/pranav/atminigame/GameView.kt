@@ -27,6 +27,7 @@ import kotlin.random.Random
 class GameView(context: Context, var aiController: AiController?) : View(context) {
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val spritePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val sprite: Bitmap = BitmapFactory.decodeResource(resources, R.drawable.atmini)
 
     // Sound and Effects subsystems
@@ -94,6 +95,8 @@ class GameView(context: Context, var aiController: AiController?) : View(context
             orbs += Orb(420f + i * 260f, 430f + Random.nextInt(-80, 50), isBig = (i % 5 == 0))
         }
         soundManager.playReset()
+        particleSystem.clear()
+        visualEffects.clear()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -104,6 +107,9 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         update(dt)
         worldBackground.update(dt, cameraX)
         worldBackground.exportPalette(effectPalette)
+        // Update particle system & visual effects timers
+        particleSystem.update(dt)
+        visualEffects.update(dt)
         drawWorld(canvas)
         postInvalidateOnAnimation()
     }
@@ -115,10 +121,6 @@ class GameView(context: Context, var aiController: AiController?) : View(context
 
     private fun update(dt: Float) {
         if (gameOver) return
-
-        // Update particle system & visual effects timers
-        particleSystem.update(dt)
-        visualEffects.update(dt)
 
         if (isAutoMode) {
             val activeOrbs = orbs.filter { !it.taken }.map { it.x to it.y }
@@ -337,13 +339,18 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         // Atmini Sprite (Squash, Stretch & Flip)
         val drawW = sprite.width * 0.42f
         val drawH = sprite.height * 0.42f
+        val visualScale = 0.42f                 // the only knob: 1.0 = original size
+        val vW = drawW * visualScale
+        val vH = drawH * visualScale
+        val vLeft = x + (drawW - vW) / 2f      // centered in her physics box
+        val vTop = y + (drawH - vH)            // feet stay exactly on the ground
         val bob = if (grounded) 0f else sin(System.nanoTime() / 80_000_000.0).toFloat() * 4f
         canvas.save()
         if (vx < -20f) {
-            canvas.scale(-1f, 1f, x + drawW / 2f, y + drawH / 2f)
+            canvas.scale(-1f, 1f, x + drawW / 2f, vTop + vH / 2f)
         }
-        val dst = RectF(x, y + bob, x + drawW, y + drawH)
-        canvas.drawBitmap(sprite, null, dst, paint)
+        val dst = RectF(vLeft, vTop + bob, vLeft + vW, vTop + vH)
+        canvas.drawBitmap(sprite, null, dst, spritePaint)
         canvas.restore()
 
         // Floating Score Popups
@@ -369,7 +376,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         drawButton(canvas, width - 200f, height - 160f, width - 20f, height - 20f, "JUMP")
 
         if (gameOver) {
-            paint.color = Color.argb(180, 0, 0, 0)
+            paint.color = Color.argb(120, 20, 10, 40)
             canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
             textPaint.textSize = 60f
             canvas.drawText("RUN COMPLETE", width / 2f - 205f, height / 2f - 20f, textPaint)

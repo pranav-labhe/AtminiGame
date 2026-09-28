@@ -31,7 +31,8 @@ data class PadConfig(
     val attack: Float,
     val release: Float,
     val volume: Float,
-    val wobble: Float = 0f
+    val wobble: Float = 0f,
+    val octave: Int = 3
 )
 
 data class ArpConfig(

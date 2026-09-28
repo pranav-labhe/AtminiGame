@@ -48,7 +48,8 @@ class GameMusicParser(private val context: Context) {
                         attack = parser.getAttributeValue(null, "attack")?.toFloatOrNull() ?: 1.5f,
                         release = parser.getAttributeValue(null, "release")?.toFloatOrNull() ?: 3.0f,
                         volume = parser.getAttributeValue(null, "volume")?.toFloatOrNull() ?: 0.25f,
-                        wobble = parser.getAttributeValue(null, "wobble")?.toFloatOrNull() ?: 0.3f
+                        wobble = parser.getAttributeValue(null, "wobble")?.toFloatOrNull() ?: 0.3f,
+                        octave = parser.getAttributeValue(null, "octave")?.toIntOrNull() ?: 3
                     )
                     "arpeggio" -> {
                         val patternStr = parser.getAttributeValue(null, "pattern") ?: "1,4,5,8"
@@ -70,7 +71,7 @@ class GameMusicParser(private val context: Context) {
             root = root,
             scale = scale,
             bass = bass ?: BassConfig("square", 1, 0.4f),
-            pad = pad ?: PadConfig("sawtooth", 1.5f, 3.0f, 0.25f, 0.3f),
+            pad = pad ?: PadConfig("sawtooth", 1.5f, 3.0f, 0.25f, 0.3f, 3),
             arpeggio = arpeggio ?: ArpConfig(listOf(1, 4, 5, 8), "sixteenth", 0.5f)
         )
     }
