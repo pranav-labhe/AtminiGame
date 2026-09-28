@@ -208,6 +208,18 @@ class WorldBackgroundRenderer {
         drawHudScrim(canvas)
     }
 
+    /**
+     * Copies the live, zone-blended colors into [out] so gameplay effects match the world.
+     * Allocation-free; call once per frame after [update].
+     */
+    fun exportPalette(out: EffectPalette) {
+        out.primary = blend.accent
+        out.secondary = blend.accent2
+        out.warm = blend.sunGlow
+        out.highlight = blend.structureLight
+        out.shadow = blend.ground
+    }
+
     /** Drops all cached bitmaps. Safe to call anytime; caches rebuild lazily on next draw. */
     fun release() {
         built = false
