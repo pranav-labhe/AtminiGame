@@ -6,6 +6,9 @@ import android.view.MotionEvent
 import android.view.View
 import android.util.Log
 import com.pranav.atminigame.audio.SoundManager
+import com.pranav.atminigame.combat.CombatDirector
+import com.pranav.atminigame.combat.CombatListener
+import com.pranav.atminigame.combat.ThreatKind
 import com.pranav.atminigame.effects.EffectPalette
 import com.pranav.atminigame.effects.ParticleSystem
 import com.pranav.atminigame.effects.VisualEffects
@@ -43,6 +46,21 @@ class GameView(context: Context, var aiController: AiController?) : View(context
     private val particleSystem = ParticleSystem(effectPalette)
     private val visualEffects = VisualEffects(effectPalette)
     private val worldBackground = WorldBackgroundRenderer()
+    private val combat = CombatDirector(particleSystem, visualEffects, effectPalette).apply {
+        listener = object : CombatListener {
+            override fun onThreatPurified(kind: ThreatKind) =
+                soundManager.playCollectOrb(kind == ThreatKind.LAST_OVERSEER)
+        }
+    }
+
+    private fun syncCombatBody() {
+        val b = combat.body
+        b.x = x; b.y = y
+        b.w = sprite.width * CHAR_SCALE; b.h = sprite.height * CHAR_SCALE
+        b.vx = vx; b.vy = vy; b.grounded = grounded
+        b.groundY = height - 250f
+        b.facing = if (vx < -20f) -1f else 1f
+    }
 
     private var lastNanos = System.nanoTime()
     private var x = 180f
@@ -104,6 +122,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         soundManager.playReset()
         particleSystem.clear()
         visualEffects.clear()
+        combat.reset(FloatArray(orbs.size) { orbs[it].x })
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -124,6 +143,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         worldBackground.release()
+        combat.release()
     }
 
     private fun update(dt: Float) {
@@ -242,6 +262,13 @@ class GameView(context: Context, var aiController: AiController?) : View(context
             }
         }
 
+        syncCombatBody()
+        if (isAutoMode) {
+            val reflex = combat.autoReflex()
+            if (reflex.overrideMove) { leftPressed = reflex.moveDir < 0; rightPressed = reflex.moveDir > 0 }
+            if (reflex.jump && grounded) jumpPressed = true
+        }
+
         val direction = when {
             leftPressed && !rightPressed -> -1f
             rightPressed && !leftPressed -> 1f
@@ -304,8 +331,16 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         }
 
         val wasGameOver = gameOver
-        gameOver = orbs.isNotEmpty() && orbs.all { it.taken }
-        if (gameOver && !wasGameOver) {
+        val allOrbsTaken = orbs.isNotEmpty() && orbs.all { it.taken }
+        syncCombatBody()
+        combat.update(dt, cameraX, width)
+        if (combat.body.consumeImpulse()) {
+            vx = combat.body.impulseVx; vy = combat.body.impulseVy; grounded = false
+        }
+        score = max(0, score + combat.consumeScoreDelta())
+
+        gameOver = combat.isDefeated || (allOrbsTaken && combat.isBossDefeated)
+        if (gameOver && !wasGameOver && !combat.isDefeated) {
             soundManager.playGameComplete()
             particleSystem.emitVictoryShower(x + width * 0.2f, height * 0.3f)
         }
@@ -332,6 +367,8 @@ class GameView(context: Context, var aiController: AiController?) : View(context
             paint.shader = null
         }
 
+        combat.draw(canvas)
+
         // Draw Visual Effects (Shockwaves & Particles)
         visualEffects.drawShockwaves(canvas)
         particleSystem.draw(canvas)
@@ -352,8 +389,11 @@ class GameView(context: Context, var aiController: AiController?) : View(context
             canvas.scale(-1f, 1f, x + drawW / 2f, y + drawH / 2f)
         }
         val dst = RectF(x, y + bob, x + drawW, y + drawH)
+        spritePaint.alpha = combat.playerAlpha()
         canvas.drawBitmap(sprite, null, dst, spritePaint)
         canvas.restore()
+
+        combat.drawOverlay(canvas)
 
         // Floating Score Popups
         visualEffects.drawFloatingScores(canvas)
@@ -371,19 +411,25 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         canvas.drawText("Orbs: $orbsCollected / 30", 30f, 102f, textPaint)
         canvas.drawText("Score: $score", 30f, 142f, textPaint)
 
+        combat.drawHud(canvas, width)
+
         // On-screen Buttons
         drawButton(canvas, 20f, height - 160f, 140f, height - 20f, "◀")
         drawButton(canvas, 160f, height - 160f, 280f, height - 20f, "▶")
-        drawButton(canvas, 300f, height - 160f, 420f, height - 20f, if (isAutoMode) "AUTO [ON]" else "AUTO")
+        drawButton(canvas, width / 2f - 75f, height - 160f, width / 2f + 75f, height - 20f, if (isAutoMode) "AUTO [ON]" else "AUTO")
+        drawButton(canvas, width - 400f, height - 160f, width - 220f, height - 20f, "BLAST")
         drawButton(canvas, width - 200f, height - 160f, width - 20f, height - 20f, "JUMP")
 
         if (gameOver) {
             paint.color = Color.argb(120, 20, 10, 40)
             canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
             textPaint.textSize = 60f
-            canvas.drawText("RUN COMPLETE", width / 2f - 205f, height / 2f - 20f, textPaint)
+            val title = if (combat.isDefeated) "ATMINI RESTS" else "RUN COMPLETE"
+            val tw = textPaint.measureText(title)
+            canvas.drawText(title, width / 2f - tw / 2f, height / 2f - 20f, textPaint)
             textPaint.textSize = 34f
-            canvas.drawText("Tap anywhere to play again", width / 2f - 190f, height / 2f + 40f, textPaint)
+            val subTw = textPaint.measureText("Tap anywhere to play again")
+            canvas.drawText("Tap anywhere to play again", width / 2f - subTw / 2f, height / 2f + 40f, textPaint)
         }
     }
 
@@ -395,7 +441,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         paint.color = Color.argb(170, 150, 180, 210)
         canvas.drawRoundRect(l, t, r, b, 26f, 26f, paint)
         paint.style = Paint.Style.FILL
-        textPaint.textSize = if (label == "JUMP" || label.contains("AUTO")) 24f else 48f
+        textPaint.textSize = if (label == "JUMP" || label == "BLAST" || label.contains("AUTO")) 24f else 48f
         val tw = textPaint.measureText(label)
         val fm = textPaint.fontMetrics
         val ty = t + (b - t) / 2f - (fm.ascent + fm.descent) / 2f
@@ -408,9 +454,13 @@ class GameView(context: Context, var aiController: AiController?) : View(context
                 if (gameOver) return true
                 val px = event.x
                 val py = event.y
+                if (event.actionMasked == MotionEvent.ACTION_DOWN &&
+                    px in (width - 400f)..(width - 220f) && py > height - 200f) {
+                    syncCombatBody(); combat.fireManual()
+                }
                 leftPressed = px < 140f && py > height - 200f
                 rightPressed = px in 160f..280f && py > height - 200f
-                if (px in 300f..420f && py > height - 200f) {
+                if (px in (width / 2f - 75f)..(width / 2f + 75f) && py > height - 200f) {
                     // Toggle event triggered once on down
                     if (event.actionMasked == MotionEvent.ACTION_DOWN) {
                         isAutoMode = !isAutoMode
