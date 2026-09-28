@@ -6,8 +6,10 @@ import android.view.MotionEvent
 import android.view.View
 import android.util.Log
 import com.pranav.atminigame.audio.SoundManager
+import com.pranav.atminigame.effects.EffectPalette
 import com.pranav.atminigame.effects.ParticleSystem
 import com.pranav.atminigame.effects.VisualEffects
+import com.pranav.atminigame.effects.WorldBackgroundRenderer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -29,8 +31,10 @@ class GameView(context: Context, var aiController: AiController?) : View(context
 
     // Sound and Effects subsystems
     private val soundManager = SoundManager(context)
-    private val particleSystem = ParticleSystem()
-    private val visualEffects = VisualEffects()
+    private val effectPalette = EffectPalette()
+    private val particleSystem = ParticleSystem(effectPalette)
+    private val visualEffects = VisualEffects(effectPalette)
+    private val worldBackground = WorldBackgroundRenderer()
 
     private var lastNanos = System.nanoTime()
     private var x = 180f
@@ -98,8 +102,15 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         lastNanos = System.nanoTime()
 
         update(dt)
+        worldBackground.update(dt, cameraX)
+        worldBackground.exportPalette(effectPalette)
         drawWorld(canvas)
         postInvalidateOnAnimation()
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        worldBackground.release()
     }
 
     private fun update(dt: Float) {
@@ -292,33 +303,10 @@ class GameView(context: Context, var aiController: AiController?) : View(context
     }
 
     private fun drawWorld(canvas: Canvas) {
-        // Deep Space Background
-        canvas.drawColor(Color.rgb(8, 12, 20))
-
-        // Ambient Moon / Glow
-        paint.shader = RadialGradient(
-            width * 0.75f, height * 0.18f, width * 0.32f,
-            intArrayOf(Color.argb(55, 150, 190, 255), Color.TRANSPARENT),
-            null, Shader.TileMode.CLAMP
-        )
-        canvas.drawCircle(width * 0.75f, height * 0.18f, width * 0.32f, paint)
-        paint.shader = null
+        worldBackground.draw(canvas, width, height, height - 250f)
 
         canvas.save()
         canvas.translate(-cameraX, 0f)
-
-        // Infinite Floor & Grid Markers
-        val groundY = height - 250f
-        paint.color = Color.rgb(24, 30, 40)
-        canvas.drawRect(cameraX, groundY, cameraX + width + 1200f, height.toFloat(), paint)
-        paint.color = Color.rgb(75, 87, 105)
-        canvas.drawRect(cameraX, groundY, cameraX + width + 1200f, groundY + 8f, paint)
-
-        paint.color = Color.rgb(43, 52, 68)
-        for (i in 0..40) {
-            val px = i * 220f
-            canvas.drawRect(px, groundY - 10f, px + 130f, groundY, paint)
-        }
 
         // Draw Collectibles with pulsating neon halos
         for (orb in orbs) {
