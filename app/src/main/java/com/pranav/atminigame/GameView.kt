@@ -18,6 +18,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
+import kotlin.math.sqrt
 import kotlin.random.Random
 
 /**
@@ -29,6 +30,12 @@ class GameView(context: Context, var aiController: AiController?) : View(context
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val spritePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val sprite: Bitmap = BitmapFactory.decodeResource(resources, R.drawable.atmini)
+
+    // Raises the jump by exactly the height she lost, so every orb stays reachable.
+    private val jumpVelocity: Float by lazy {
+        val lostHeight = sprite.height * (ORIGINAL_SCALE - CHAR_SCALE)
+        sqrt(1050f * 1050f + 2f * 2300f * (lostHeight / 2f))
+    }
 
     // Sound and Effects subsystems
     private val soundManager = SoundManager(context)
@@ -174,7 +181,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
                     if (tx == null || ty == null) {
                         aiPhase = AiPhase.PICK_ORB
                     } else {
-                        val charCenterX = x + (sprite.width * 0.42f) / 2f
+                        val charCenterX = x + (sprite.width * CHAR_SCALE) / 2f
                         val dxToTarget = tx - charCenterX
                         if (abs(dxToTarget) <= 25f) {
                             vx = 0f
@@ -215,7 +222,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
             val tx = aiTargetX
             val ty = aiTargetY
             if (aiPhase == AiPhase.MOVING && tx != null && ty != null) {
-                val charCenterX = x + (sprite.width * 0.42f) / 2f
+                val charCenterX = x + (sprite.width * CHAR_SCALE) / 2f
                 val dxToTarget = tx - charCenterX
                 val absDx = abs(dxToTarget)
                 when {
@@ -246,18 +253,18 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         } else {
             soundManager.playMove(direction > 0f)
             // Emit slight running dust particles
-            val charW = sprite.width * 0.42f
-            particleSystem.emitJumpThruster(x + charW / 2f, y + sprite.height * 0.42f)
+            val charW = sprite.width * CHAR_SCALE
+            particleSystem.emitJumpThruster(x + charW / 2f, y + sprite.height * CHAR_SCALE)
         }
         vx = vx.coerceIn(-700f, 700f)
 
         if (jumpPressed && grounded) {
-            vy = -1050f
+            vy = -jumpVelocity
             grounded = false
             jumpPressed = false
             soundManager.playJump()
-            val charW = sprite.width * 0.42f
-            val charH = sprite.height * 0.42f
+            val charW = sprite.width * CHAR_SCALE
+            val charH = sprite.height * CHAR_SCALE
             particleSystem.emitJumpThruster(x + charW / 2f, y + charH)
         }
 
@@ -266,8 +273,8 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         y += vy * dt
 
         val groundY = height - 250f
-        val charH = sprite.height * 0.42f
-        val charW = sprite.width * 0.42f
+        val charH = sprite.height * CHAR_SCALE
+        val charW = sprite.width * CHAR_SCALE
 
         if (y + charH >= groundY) {
             y = groundY - charH
@@ -331,25 +338,20 @@ class GameView(context: Context, var aiController: AiController?) : View(context
 
         // Draw AI Targeting Laser if in Auto Mode
         if (isAutoMode && aiTargetX != null && aiTargetY != null) {
-            val charW = sprite.width * 0.42f
-            val charH = sprite.height * 0.42f
+            val charW = sprite.width * CHAR_SCALE
+            val charH = sprite.height * CHAR_SCALE
             visualEffects.drawAiTargetingLaser(canvas, x + charW / 2f, y + charH / 2f, aiTargetX!!, aiTargetY!!)
         }
 
         // Atmini Sprite (Squash, Stretch & Flip)
-        val drawW = sprite.width * 0.42f
-        val drawH = sprite.height * 0.42f
-        val visualScale = 0.42f                 // the only knob: 1.0 = original size
-        val vW = drawW * visualScale
-        val vH = drawH * visualScale
-        val vLeft = x + (drawW - vW) / 2f      // centered in her physics box
-        val vTop = y + (drawH - vH)            // feet stay exactly on the ground
+        val drawW = sprite.width * CHAR_SCALE
+        val drawH = sprite.height * CHAR_SCALE
         val bob = if (grounded) 0f else sin(System.nanoTime() / 80_000_000.0).toFloat() * 4f
         canvas.save()
         if (vx < -20f) {
-            canvas.scale(-1f, 1f, x + drawW / 2f, vTop + vH / 2f)
+            canvas.scale(-1f, 1f, x + drawW / 2f, y + drawH / 2f)
         }
-        val dst = RectF(vLeft, vTop + bob, vLeft + vW, vTop + vH)
+        val dst = RectF(x, y + bob, x + drawW, y + drawH)
         canvas.drawBitmap(sprite, null, dst, spritePaint)
         canvas.restore()
 
@@ -434,5 +436,10 @@ class GameView(context: Context, var aiController: AiController?) : View(context
             }
         }
         return true
+    }
+
+    companion object {
+        private const val ORIGINAL_SCALE = 0.46f
+        private const val CHAR_SCALE = 0.46f * 0.42f   // 25% smaller
     }
 }
