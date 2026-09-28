@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ic_atmini_head: layer-list of face, ear, hair (bottom to top). References the child files, no copies. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/atmini_face" android:drawable="@drawable/ic_atmini_face"/>
+    <item android:id="@+id/atmini_ear" android:drawable="@drawable/ic_atmini_ear"/>
+    <item android:id="@+id/atmini_hair" android:drawable="@drawable/ic_atmini_hair"/>
+</layer-list>

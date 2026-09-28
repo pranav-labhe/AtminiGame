@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ic_atmini_upper_body: layer-list of torso, head, arm_hand (bottom to top). References the child files, no copies. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/atmini_torso" android:drawable="@drawable/ic_atmini_torso"/>
+    <item android:id="@+id/atmini_head" android:drawable="@drawable/ic_atmini_head"/>
+    <item android:id="@+id/atmini_arm_hand" android:drawable="@drawable/ic_atmini_arm_hand"/>
+</layer-list>

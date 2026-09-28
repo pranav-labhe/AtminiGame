@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ic_atmini_torso: layer-list of belly, chest, breast (bottom to top). References the child files, no copies. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/atmini_belly" android:drawable="@drawable/ic_atmini_belly"/>
+    <item android:id="@+id/atmini_chest" android:drawable="@drawable/ic_atmini_chest"/>
+    <item android:id="@+id/atmini_breast" android:drawable="@drawable/ic_atmini_breast"/>
+</layer-list>

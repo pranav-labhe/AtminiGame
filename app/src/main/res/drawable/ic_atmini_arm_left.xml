@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ic_atmini_arm_left: layer-list of hand_left, fingers_left, palm_left (bottom to top). References the child files, no copies. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/atmini_hand_left" android:drawable="@drawable/ic_atmini_hand_left"/>
+    <item android:id="@+id/atmini_fingers_left" android:drawable="@drawable/ic_atmini_fingers_left"/>
+    <item android:id="@+id/atmini_palm_left" android:drawable="@drawable/ic_atmini_palm_left"/>
+</layer-list>

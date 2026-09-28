@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ic_atmini_full_character: layer-list of base_shadow, cloak, upper_body, lower_body (bottom to top). References the child files, no copies. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/atmini_base_shadow" android:drawable="@drawable/ic_atmini_base_shadow"/>
+    <item android:id="@+id/atmini_cloak" android:drawable="@drawable/ic_atmini_cloak"/>
+    <item android:id="@+id/atmini_upper_body" android:drawable="@drawable/ic_atmini_upper_body"/>
+    <item android:id="@+id/atmini_lower_body" android:drawable="@drawable/ic_atmini_lower_body"/>
+</layer-list>

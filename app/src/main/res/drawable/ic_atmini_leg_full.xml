@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ic_atmini_leg_full: layer-list of leg, knee, foot (bottom to top). References the child files, no copies. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/atmini_leg" android:drawable="@drawable/ic_atmini_leg"/>
+    <item android:id="@+id/atmini_knee" android:drawable="@drawable/ic_atmini_knee"/>
+    <item android:id="@+id/atmini_foot" android:drawable="@drawable/ic_atmini_foot"/>
+</layer-list>
