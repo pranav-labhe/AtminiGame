@@ -2,13 +2,9 @@ package com.pranav.atminigame
 
 import android.content.Context
 import android.graphics.*
-import android.graphics.drawable.Drawable
-import androidx.core.content.ContextCompat
 import android.view.MotionEvent
 import android.view.View
 import android.util.Log
-import android.view.animation.AnimationUtils
-import android.view.animation.Transformation
 import com.pranav.atminigame.audio.SoundManager
 import com.pranav.atminigame.effects.ParticleSystem
 import com.pranav.atminigame.effects.VisualEffects
@@ -29,16 +25,7 @@ import kotlin.random.Random
 class GameView(context: Context, var aiController: AiController?) : View(context) {
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val characterPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-        alpha = 255
-    }
     private val sprite: Bitmap = BitmapFactory.decodeResource(resources, R.drawable.atmini)
-
-    private val density = resources.displayMetrics.density
-    private fun dpToPx(dp: Float): Float = dp * density
-
-    private val charH = dpToPx(110f)
-    private val charW = charH * (sprite.width.toFloat() / sprite.height.toFloat())
 
     // Sound and Effects subsystems
     private val soundManager = SoundManager(context)
@@ -77,19 +64,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         textSize = 52f
     }
 
-    // Vector drawables for background objects
-    private val towerDrawable: Drawable? = ContextCompat.getDrawable(context, R.drawable.bg_tower)
-    private val cyberTreeDrawable: Drawable? = ContextCompat.getDrawable(context, R.drawable.bg_cyber_tree)
-    private val orbDrawable: Drawable? = ContextCompat.getDrawable(context, R.drawable.bg_orb)
-    private val floorDrawable: Drawable? = ContextCompat.getDrawable(context, R.drawable.bg_floor)
-    private val skyDrawable: Drawable? = ContextCompat.getDrawable(context, R.drawable.bg_sky)
-    private val cloudDrawable: Drawable? = ContextCompat.getDrawable(context, R.drawable.bg_cloud)
-
     private val scope = CoroutineScope(Dispatchers.Default)
-
-    // Animation controllers loaded from res/anim/
-    private val orbPulseAnimation = AnimationUtils.loadAnimation(context, R.anim.orb_pulse_anim)
-    private val beaconBlinkAnimation = AnimationUtils.loadAnimation(context, R.anim.beacon_blink_anim)
 
     init {
         isFocusable = true
@@ -102,20 +77,14 @@ class GameView(context: Context, var aiController: AiController?) : View(context
 
     private fun reset() {
         x = 180f
+        y = 0f
         vx = 0f
         vy = 0f
+        grounded = false
         score = 0
         orbsCollected = 0
         cameraX = 0f
         gameOver = false
-        if (height > 0) {
-            val groundY = height - 250f
-            y = groundY - charH
-            grounded = true
-        } else {
-            y = 0f
-            grounded = false
-        }
         orbs.clear()
         for (i in 0 until 30) {
             orbs += Orb(420f + i * 260f, 430f + Random.nextInt(-80, 50), isBig = (i % 5 == 0))
@@ -192,7 +161,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
                     if (tx == null || ty == null) {
                         aiPhase = AiPhase.PICK_ORB
                     } else {
-                        val charCenterX = x + 60f
+                        val charCenterX = x + (sprite.width * 0.42f) / 2f
                         val dxToTarget = tx - charCenterX
                         if (abs(dxToTarget) <= 25f) {
                             vx = 0f
@@ -233,7 +202,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
             val tx = aiTargetX
             val ty = aiTargetY
             if (aiPhase == AiPhase.MOVING && tx != null && ty != null) {
-                val charCenterX = x + 60f
+                val charCenterX = x + (sprite.width * 0.42f) / 2f
                 val dxToTarget = tx - charCenterX
                 val absDx = abs(dxToTarget)
                 when {
@@ -264,7 +233,8 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         } else {
             soundManager.playMove(direction > 0f)
             // Emit slight running dust particles
-            particleSystem.emitJumpThruster(x + charW / 2f, y + charH)
+            val charW = sprite.width * 0.42f
+            particleSystem.emitJumpThruster(x + charW / 2f, y + sprite.height * 0.42f)
         }
         vx = vx.coerceIn(-700f, 700f)
 
@@ -273,6 +243,8 @@ class GameView(context: Context, var aiController: AiController?) : View(context
             grounded = false
             jumpPressed = false
             soundManager.playJump()
+            val charW = sprite.width * 0.42f
+            val charH = sprite.height * 0.42f
             particleSystem.emitJumpThruster(x + charW / 2f, y + charH)
         }
 
@@ -281,10 +253,8 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         y += vy * dt
 
         val groundY = height - 250f
-        if (height > 0 && y == 0f) {
-            y = groundY - charH
-            grounded = true
-        }
+        val charH = sprite.height * 0.42f
+        val charW = sprite.width * 0.42f
 
         if (y + charH >= groundY) {
             y = groundY - charH
@@ -302,8 +272,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         val charCenterX = x + charW / 2f
         val charCenterY = y + charH / 2f
         for (orb in orbs) {
-            // Expanded collision bounds so orbs are reliably collected when jumping through/over them
-            if (!orb.taken && abs(orb.x - charCenterX) < 95f && abs(orb.y - charCenterY) < 110f) {
+            if (!orb.taken && abs(orb.x - charCenterX) < 65f && abs(orb.y - charCenterY) < 100f) {
                 orb.taken = true
                 score += if (orb.isBig) 5 else 1
                 orbsCollected++
@@ -323,79 +292,47 @@ class GameView(context: Context, var aiController: AiController?) : View(context
     }
 
     private fun drawWorld(canvas: Canvas) {
-        // Draw Background Sky Vector
-        skyDrawable?.let { sky ->
-            sky.setBounds(0, 0, width, height)
-            sky.draw(canvas)
-        }
+        // Deep Space Background
+        canvas.drawColor(Color.rgb(8, 12, 20))
 
-        canvas.save()
-        // Parallax background soft glowing cyberpunk nebula clouds using cloud vector
-        canvas.translate(-cameraX * 0.1f, 0f)
-        for (i in -1..10) {
-            val cx = i * 480f + sin((System.nanoTime() + i * 150_000_000L) / 500_000_000.0).toFloat() * 25f
-            val cy = 80f + (i * 97f) % 180f
-            cloudDrawable?.let { cloud ->
-                cloud.setBounds(cx.toInt(), cy.toInt(), (cx + 220f).toInt(), (cy + 120f).toInt())
-                cloud.draw(canvas)
-            }
-        }
-        canvas.restore()
-
-        canvas.save()
-        // Parallax background skyline (towers & cyber-trees vectors)
-        canvas.translate(-cameraX * 0.25f, 0f)
-        val groundY = height - 250f
-        for (i in -2..15) {
-            val twx = i * 450f
-            val twh = 320f + (i * 73) % 180f
-            towerDrawable?.let { tower ->
-                tower.setBounds(twx.toInt(), (groundY - twh).toInt(), (twx + 220f).toInt(), groundY.toInt())
-                tower.draw(canvas)
-            }
-            
-            if (i % 2 == 0) {
-                cyberTreeDrawable?.let { tree ->
-                    tree.setBounds((twx + 300f).toInt(), (groundY - 210f).toInt(), (twx + 360f).toInt(), groundY.toInt())
-                    tree.draw(canvas)
-                }
-            }
-        }
-        canvas.restore()
+        // Ambient Moon / Glow
+        paint.shader = RadialGradient(
+            width * 0.75f, height * 0.18f, width * 0.32f,
+            intArrayOf(Color.argb(55, 150, 190, 255), Color.TRANSPARENT),
+            null, Shader.TileMode.CLAMP
+        )
+        canvas.drawCircle(width * 0.75f, height * 0.18f, width * 0.32f, paint)
+        paint.shader = null
 
         canvas.save()
         canvas.translate(-cameraX, 0f)
 
-        // Industrial Metal Floor using floor vector (repeating across the entire world width)
-        floorDrawable?.let { floor ->
-            for (i in -5..50) {
-                val fx = i * 180f
-                floor.setBounds(fx.toInt(), groundY.toInt(), (fx + 180f).toInt(), (groundY + 250f).toInt())
-                floor.draw(canvas)
-            }
+        // Infinite Floor & Grid Markers
+        val groundY = height - 250f
+        paint.color = Color.rgb(24, 30, 40)
+        canvas.drawRect(cameraX, groundY, cameraX + width + 1200f, height.toFloat(), paint)
+        paint.color = Color.rgb(75, 87, 105)
+        canvas.drawRect(cameraX, groundY, cameraX + width + 1200f, groundY + 8f, paint)
+
+        paint.color = Color.rgb(43, 52, 68)
+        for (i in 0..40) {
+            val px = i * 220f
+            canvas.drawRect(px, groundY - 10f, px + 130f, groundY, paint)
         }
 
-        // Draw Soul-like Ethereal Orbs using orb vector with XML animation scaling transformation
-        val orbTransformation = Transformation()
-        val currentAnimationTime = AnimationUtils.currentAnimationTimeMillis()
-        orbPulseAnimation.getTransformation(currentAnimationTime, orbTransformation)
-        val orbScaleFactor = orbTransformation.matrix.let { m ->
-            val values = floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)
-            m.getValues(values)
-            values[Matrix.MSCALE_X]
-        }.let { if (it > 0f) it else 1.0f }
-
+        // Draw Collectibles with pulsating neon halos
         for (orb in orbs) {
             if (orb.taken) continue
-            val soulBob = sin(System.nanoTime() / 150_000_000.0 + orb.x).toFloat() * 9f
-            val currentOrbY = orb.y + soulBob
+            val radius = if (orb.isBig) 40f else 28f
+            val pulse = radius + sin(System.nanoTime() / 120_000_000.0).toFloat() * 4f
 
-            val baseRadius = if (orb.isBig) 48f else 34f
-            val radius = baseRadius * orbScaleFactor
-            orbDrawable?.let { orbVec ->
-                orbVec.setBounds((orb.x - radius).toInt(), (currentOrbY - radius).toInt(), (orb.x + radius).toInt(), (currentOrbY + radius).toInt())
-                orbVec.draw(canvas)
-            }
+            paint.shader = RadialGradient(
+                orb.x, orb.y, pulse,
+                intArrayOf(Color.WHITE, if (orb.isBig) Color.rgb(255, 120, 120) else Color.rgb(120, 220, 255), Color.TRANSPARENT),
+                floatArrayOf(0f, 0.4f, 1f), Shader.TileMode.CLAMP
+            )
+            canvas.drawCircle(orb.x, orb.y, pulse, paint)
+            paint.shader = null
         }
 
         // Draw Visual Effects (Shockwaves & Particles)
@@ -404,24 +341,26 @@ class GameView(context: Context, var aiController: AiController?) : View(context
 
         // Draw AI Targeting Laser if in Auto Mode
         if (isAutoMode && aiTargetX != null && aiTargetY != null) {
+            val charW = sprite.width * 0.42f
+            val charH = sprite.height * 0.42f
             visualEffects.drawAiTargetingLaser(canvas, x + charW / 2f, y + charH / 2f, aiTargetX!!, aiTargetY!!)
         }
+
+        // Atmini Sprite (Squash, Stretch & Flip)
+        val drawW = sprite.width * 0.42f
+        val drawH = sprite.height * 0.42f
+        val bob = if (grounded) 0f else sin(System.nanoTime() / 80_000_000.0).toFloat() * 4f
+        canvas.save()
+        if (vx < -20f) {
+            canvas.scale(-1f, 1f, x + drawW / 2f, y + drawH / 2f)
+        }
+        val dst = RectF(x, y + bob, x + drawW, y + drawH)
+        canvas.drawBitmap(sprite, null, dst, paint)
+        canvas.restore()
 
         // Floating Score Popups
         visualEffects.drawFloatingScores(canvas)
 
-        canvas.restore()
-
-        // Atmini Character drawn cleanly on true foreground canvas with exact native aspect ratio
-        val bob = if (grounded) 0f else sin(System.nanoTime() / 80_000_000.0).toFloat() * 4f
-        val screenAtminiX = x - cameraX
-        val dst = RectF(screenAtminiX, y + bob, screenAtminiX + charW, y + bob + charH)
-
-        canvas.save()
-        if (vx < -20f) {
-            canvas.scale(-1f, 1f, dst.centerX(), dst.centerY())
-        }
-        canvas.drawBitmap(sprite, null, dst, characterPaint)
         canvas.restore()
 
         // HUD & UI Controls Overlay
