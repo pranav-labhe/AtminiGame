@@ -94,9 +94,12 @@ class ProceduralMusicEngine(private val library: MusicLibrary) {
     private var sfxSeqSamplesPerStep = 0
 
     // Delay & Spatial Effect
-    private val delayBuffer = FloatArray(sampleRate) // 1.0 second delay line
+    private val musicDelayBuffer = FloatArray(sampleRate) // Independent wet busses keep user mix controls separate.
+    private val effectsDelayBuffer = FloatArray(sampleRate)
     private var delayWriteIdx = 0
     private var feedback = 0.32f
+    @Volatile var musicVolume: Float = 0.72f
+    @Volatile var effectsVolume: Float = 0.9f
 
     // DC Blocker & High-Pass (Cutoff ~20 Hz at 44.1 kHz)
     private var lastOut = 0f
@@ -327,16 +330,18 @@ class ProceduralMusicEngine(private val library: MusicLibrary) {
 
         // Mixer & Space Delay
         val drySfx = sfxCollect + sfxJump + sfxMove + sfxSeq
-        val spatialMelody = (padSample + arpSample + sfxCollect * 0.4f + sfxSeq * 0.3f) * 0.3f
-
-        val delayReadIdx = (delayWriteIdx + 1) % delayBuffer.size
-        val delayedSignal = delayBuffer[delayReadIdx]
-        val spatialOut = spatialMelody + delayedSignal * feedback
-        delayBuffer[delayWriteIdx] = spatialOut
-        delayWriteIdx = (delayWriteIdx + 1) % delayBuffer.size
+        val musicWet = (padSample + arpSample) * 0.3f
+        val effectsWet = (sfxCollect * 0.4f + sfxSeq * 0.3f) * 0.3f
+        val delayReadIdx = (delayWriteIdx + 1) % musicDelayBuffer.size
+        val musicOut = musicWet + musicDelayBuffer[delayReadIdx] * feedback
+        val effectsOut = effectsWet + effectsDelayBuffer[delayReadIdx] * feedback
+        musicDelayBuffer[delayWriteIdx] = musicOut
+        effectsDelayBuffer[delayWriteIdx] = effectsOut
+        delayWriteIdx = (delayWriteIdx + 1) % musicDelayBuffer.size
 
         // Total Mix
-        val mixed = (bassSample * 0.42f) + spatialOut + (drySfx * 0.85f)
+        val mixed = ((bassSample * 0.42f) + musicOut) * musicVolume +
+            ((drySfx * 0.85f) + effectsOut) * effectsVolume
 
         // DC High-Pass Filter (Cutoff ~20 Hz)
         val out = hpAlpha * (lastOut + mixed - lastIn)

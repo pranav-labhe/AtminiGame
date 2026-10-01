@@ -52,4 +52,30 @@
         <arpeggio pattern="1,2,1,5,1" noteLength="quarter" volume="0.08" />
     </track>
 
+    <!-- Zone-specific synth palettes; Atmini's music follows the world loop. -->
+    <track id="zone_dawn" tempo="92" root="D" scale="phrygian">
+        <bass waveform="triangle" octave="2" volume="0.30" />
+        <pad waveform="sawtooth" octave="4" attack="1.2" release="2.0" volume="0.20" wobble="0.3" />
+        <arpeggio pattern="1,4,7,11,8,5,3,6" noteLength="eighth" volume="0.29" />
+    </track>
+    <track id="zone_garden" tempo="116" root="F" scale="major">
+        <bass waveform="triangle" octave="2" volume="0.28" />
+        <pad waveform="sawtooth" octave="4" attack="0.8" release="1.6" volume="0.19" wobble="0.2" />
+        <arpeggio pattern="1,3,5,8,10,8,5,3" noteLength="sixteenth" volume="0.27" />
+    </track>
+    <track id="zone_ocean" tempo="104" root="A" scale="mixolydian">
+        <bass waveform="sine" octave="2" volume="0.31" />
+        <pad waveform="triangle" octave="4" attack="1.6" release="2.4" volume="0.21" wobble="0.15" />
+        <arpeggio pattern="1,5,8,12,10,8,5,3" noteLength="eighth" volume="0.26" />
+    </track>
+    <track id="zone_aurora" tempo="108" root="G" scale="dorian">
+        <bass waveform="square" octave="2" volume="0.27" />
+        <pad waveform="sawtooth" octave="4" attack="1.0" release="2.6" volume="0.2" wobble="0.4" />
+        <arpeggio pattern="1,4,7,10,13,10,7,5" noteLength="sixteenth" volume="0.25" />
+    </track>
+    <track id="zone_celestial" tempo="88" root="C#" scale="minor">
+        <bass waveform="sine" octave="2" volume="0.30" />
+        <pad waveform="triangle" octave="4" attack="2.0" release="3.0" volume="0.24" wobble="0.12" />
+        <arpeggio pattern="1,3,7,10,14,10,7,3" noteLength="eighth" volume="0.24" />
+    </track>
 </gameMusic>

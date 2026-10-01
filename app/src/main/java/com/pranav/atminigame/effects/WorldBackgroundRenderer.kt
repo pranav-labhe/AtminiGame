@@ -56,6 +56,7 @@ class WorldBackgroundRenderer {
 
     /** Skips the most fill-rate-heavy layers. Enable for low-end devices. */
     var reducedEffects: Boolean = false
+    var reducedMotion: Boolean = false
 
     // ---------------------------------------------------------------- viewport
     private var viewW = 0
@@ -156,7 +157,7 @@ class WorldBackgroundRenderer {
      * Call once per frame after gameplay update, with the same dt.
      */
     fun update(dt: Float, cameraX: Float) {
-        val step = if (dt.isNaN() || dt < 0f) 0f else min(dt, MAX_DT)
+        val step = if (reducedMotion || dt.isNaN() || dt < 0f) 0f else min(dt, MAX_DT)
         time += step
         if (time > TIME_WRAP) time -= TIME_WRAP
 
@@ -168,7 +169,8 @@ class WorldBackgroundRenderer {
         lastCameraX = cameraX
         this.cameraX = cameraX
 
-        updateZone(step)
+        // Keep zone progress responsive while freezing ambient motion for reduced-motion users.
+        updateZone(if (reducedMotion) MAX_DT else step)
         if (!built) return
 
         // A jump larger than one screen means a reset/teleport: don't drag particles along.

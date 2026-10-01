@@ -1,8 +1,10 @@
 package com.pranav.atminigame
 
+import android.app.Activity
 import android.content.Context
 import android.graphics.*
 import android.view.MotionEvent
+import android.view.KeyEvent
 import android.view.View
 import android.util.Log
 import com.pranav.atminigame.audio.SoundManager
@@ -15,6 +17,8 @@ import com.pranav.atminigame.effects.VisualEffects
 import com.pranav.atminigame.effects.WorldBackgroundRenderer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
@@ -30,9 +34,53 @@ import kotlin.random.Random
  */
 class GameView(context: Context, var aiController: AiController?) : View(context) {
 
+    private enum class UiScreen { TITLE, TUTORIAL, PLAYING, PAUSED, SETTINGS, ARCHIVE, LOADOUT, PHOTO, RUN_END, UPGRADE }
+    private var uiScreen = UiScreen.TITLE
+    private var endlessMode = false
+    private var previousScreen = UiScreen.TITLE
+    private val progress = PlayerProgress(context)
+    private var tutorialPage = 0
+    private var runSeed = Random.nextInt()
+    private var runStartedAt = 0L
+    private var runElapsed = 0f
+    private var runDistance = 0f
+    private var newRecord = false
+    private var runEpoch = 0
+    private var orbMagnet = 0f
+    private var highJumpUpgrade = 0f
+    private var endlessSegmentIndex = 0
+    private var endlessDirector: EndlessRunDirector? = null
+    private var nextEndlessOrbX = 0f
+    private var lastMilestone = 0
+    private var dailyChallenge = false
+    private var requestedRunSeed: Int? = null
+    private var cleanRun = true
+    private var combo = 0
+    private var bestCombo = 0
+    private var jumpBuffer = 0f
+    private var coyoteTime = 0f
+    private var facingLeft = false
+    private var walkAnimationPhase = 0f
+    private var walkAnimationBlend = 0f
+    private val walkCycleSequence = intArrayOf(0, 1, 2, 3, 4, 3, 2, 1)
+    private var lastMusicZone = -1
+    private var aiBusySinceNanos = 0L
+    private var aiFallbackActive = false
+    private var aiInitializationStarted = false
+
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val spritePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-    private val sprite: Bitmap = BitmapFactory.decodeResource(resources, R.drawable.atmini)
+    private val orbGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val orbCorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val spriteRect = RectF()
+    private val sprite: Bitmap = BitmapFactory.decodeResource(resources, R.drawable.atministanding)
+    // The first five frames form one consistent side-view cycle. The second
+    // row is a different camera angle, so it is kept as source art but not
+    // interleaved into the in-game loop.
+    private val walkFrames: Array<Bitmap> = intArrayOf(
+        R.drawable.atmini_walk_01, R.drawable.atmini_walk_02, R.drawable.atmini_walk_03,
+        R.drawable.atmini_walk_04, R.drawable.atmini_walk_05
+    ).map { BitmapFactory.decodeResource(resources, it) }.toTypedArray()
 
     // Raises the jump by exactly the height she lost, so every orb stays reachable.
     private val jumpVelocity: Float by lazy {
@@ -50,6 +98,8 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         listener = object : CombatListener {
             override fun onThreatPurified(kind: ThreatKind) =
                 soundManager.playCollectOrb(kind == ThreatKind.LAST_OVERSEER)
+            override fun onPlayerHit(harmonyLeft: Int) { cleanRun = false; combo = 0 }
+            override fun onShieldBlocked(chargesLeft: Int) { cleanRun = false; combo = 0 }
         }
     }
 
@@ -59,7 +109,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         b.w = sprite.width * CHAR_SCALE; b.h = sprite.height * CHAR_SCALE
         b.vx = vx; b.vy = vy; b.grounded = grounded
         b.groundY = height - 250f
-        b.facing = if (vx < -20f) -1f else 1f
+        b.facing = if (facingLeft) -1f else 1f
     }
 
     private var lastNanos = System.nanoTime()
@@ -72,20 +122,22 @@ class GameView(context: Context, var aiController: AiController?) : View(context
     private var orbsCollected = 0
     private var cameraX = 0f
     private var gameOver = false
+    private var gamePaused = false
     private var leftPressed = false
     private var rightPressed = false
     private var jumpPressed = false
     private var isAutoMode = false
 
-    private var lastAiCallNanos = 0L
-    private val aiCallIntervalNanos = 350_000_000L // 350ms AI cadence
 
     private enum class AiPhase { PICK_ORB, DECIDE_APPROACH, MOVING, DECIDE_JUMP, BUSY }
     private var aiPhase = AiPhase.PICK_ORB
     private var aiTargetX: Float? = null
     private var aiTargetY: Float? = null
 
-    private data class Orb(var x: Float, var y: Float, var taken: Boolean = false, var isBig: Boolean = false)
+    private data class Orb(
+        var x: Float, var y: Float, var taken: Boolean = false,
+        var isBig: Boolean = false, var bonus: Boolean = false
+    )
     private val orbs = mutableListOf<Orb>()
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -94,18 +146,49 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         textSize = 52f
     }
 
-    private val scope = CoroutineScope(Dispatchers.Default)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     init {
         isFocusable = true
-        scope.launch {
-            aiController?.initialize()
-        }
-        reset()
+        isFocusableInTouchMode = true
+        soundManager.soundEnabled = progress.effectsVolume > 0f
+        soundManager.musicEnabled = progress.musicEnabled
+        soundManager.hapticsEnabled = progress.hapticsEnabled
+        soundManager.musicVolume = progress.musicVolume
+        soundManager.effectsVolume = progress.effectsVolume
+        worldBackground.reducedEffects = progress.reducedEffects
+        worldBackground.reducedMotion = progress.reducedMotion
         soundManager.startMusic("landing")
     }
 
-    private fun reset() {
+    private fun reset(endless: Boolean = endlessMode) {
+        runEpoch++
+        endlessMode = endless
+        runSeed = requestedRunSeed ?: Random.nextInt()
+        requestedRunSeed = null
+        endlessDirector = if (endlessMode) EndlessRunDirector(runSeed) else null
+        endlessSegmentIndex = 0
+        lastMilestone = 0
+        lastMusicZone = -1
+        nextEndlessOrbX = 0f
+        orbMagnet = 0f
+        highJumpUpgrade = 0f
+        runElapsed = 0f
+        runDistance = 0f
+        newRecord = false
+        cleanRun = true
+        combo = 0
+        bestCombo = 0
+        jumpBuffer = 0f
+        coyoteTime = 0f
+        facingLeft = false
+        walkAnimationPhase = 0f
+        walkAnimationBlend = 0f
+        aiBusySinceNanos = 0L
+        aiFallbackActive = false
+        aiPhase = AiPhase.PICK_ORB
+        aiTargetX = null
+        aiTargetY = null
         x = 180f
         y = 0f
         vx = 0f
@@ -116,13 +199,26 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         cameraX = 0f
         gameOver = false
         orbs.clear()
-        for (i in 0 until 30) {
-            orbs += Orb(420f + i * 260f, 430f + Random.nextInt(-80, 50), isBig = (i % 5 == 0))
+        if (!endlessMode) {
+            val runRandom = Random(runSeed)
+            for (i in 0 until 30) {
+                orbs += Orb(420f + i * 260f, 430f + runRandom.nextInt(-80, 50), isBig = (i % 5 == 0))
+            }
         }
         soundManager.playReset()
         particleSystem.clear()
         visualEffects.clear()
-        combat.reset(FloatArray(orbs.size) { orbs[it].x })
+        if (endlessMode) {
+            combat.reset(FloatArray(0), runSeed)
+            appendEndlessSegments(width.coerceAtLeast(1280).toFloat() * 2.5f)
+        } else {
+            combat.reset(FloatArray(orbs.size) { orbs[it].x }, runSeed)
+        }
+        runStartedAt = System.nanoTime()
+        uiScreen = if (!progress.tutorialSeen) UiScreen.TUTORIAL else UiScreen.PLAYING
+        gamePaused = uiScreen != UiScreen.PLAYING
+        if (uiScreen == UiScreen.TUTORIAL) tutorialPage = 0
+        soundManager.playReset()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -133,6 +229,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         update(dt)
         worldBackground.update(dt, cameraX)
         worldBackground.exportPalette(effectPalette)
+        applyCosmeticPalette()
         // Update particle system & visual effects timers
         particleSystem.update(dt)
         visualEffects.update(dt)
@@ -142,31 +239,355 @@ class GameView(context: Context, var aiController: AiController?) : View(context
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        runEpoch++
+        scope.cancel()
         worldBackground.release()
         combat.release()
+        soundManager.release()
+    }
+
+    fun handleBackPressed(): Boolean {
+        return when (uiScreen) {
+            UiScreen.PLAYING -> { pauseRun(); true }
+            UiScreen.PAUSED -> { uiScreen = UiScreen.PLAYING; gamePaused = false; true }
+            UiScreen.SETTINGS -> { uiScreen = previousScreen; gamePaused = uiScreen != UiScreen.PLAYING; true }
+            UiScreen.ARCHIVE, UiScreen.LOADOUT -> { uiScreen = UiScreen.TITLE; true }
+            UiScreen.PHOTO -> { uiScreen = UiScreen.PAUSED; true }
+            UiScreen.TUTORIAL -> {
+                progress.tutorialSeen = true; uiScreen = UiScreen.PLAYING; gamePaused = false
+                runStartedAt = System.nanoTime(); true
+            }
+            UiScreen.RUN_END -> { uiScreen = UiScreen.TITLE; gameOver = false; true }
+            UiScreen.UPGRADE -> { uiScreen = UiScreen.PAUSED; gamePaused = true; true }
+            else -> false
+        }
+    }
+
+    fun onHostPaused() {
+        if (uiScreen == UiScreen.PLAYING) {
+            pauseRun()
+        }
+        soundManager.stopMusic()
+    }
+
+    private fun pauseRun() {
+        uiScreen = UiScreen.PAUSED
+        gamePaused = true
+        leftPressed = false; rightPressed = false; jumpPressed = false
+        runEpoch++
+        aiPhase = AiPhase.PICK_ORB
+        aiBusySinceNanos = 0L
+        aiTargetX = null; aiTargetY = null
+    }
+
+    fun onHostResumed() {
+        soundManager.resumeMusic()
+    }
+
+    private fun appendEndlessSegments(untilWorldX: Float) {
+        val director = endlessDirector ?: return
+        while (nextEndlessOrbX < untilWorldX) {
+            val segment = director.segment(endlessSegmentIndex++)
+            segment.orbs.forEach { spawn ->
+                orbs += Orb(spawn.x, spawn.y, isBig = spawn.big, bonus = spawn.bonus)
+            }
+            val recoverySegment = segment.index % 8 == 7
+            combat.appendEndlessChunk(
+                if (recoverySegment) FloatArray(0) else FloatArray(segment.orbs.size) { segment.orbs[it].x },
+                segment.bossX,
+                runSeed xor segment.index
+            )
+            nextEndlessOrbX = segment.endX
+        }
+    }
+
+    private fun beginRun(endless: Boolean, daily: Boolean = false) {
+        dailyChallenge = daily
+        requestedRunSeed = if (daily) localDailySeed() else null
+        reset(endless)
+        gamePaused = uiScreen != UiScreen.PLAYING
+        runStartedAt = System.nanoTime()
+        soundManager.startMusic(if (isAutoMode) "aimode" else "game")
+    }
+
+    private fun exitGame() {
+        (context as? Activity)?.finish()
+    }
+
+    private fun applyCosmeticPalette() {
+        val tint = when (progress.selectedCosmetic) {
+            1 -> Color.rgb(70, 235, 255)
+            2 -> Color.rgb(208, 125, 255)
+            3 -> Color.rgb(255, 208, 92)
+            else -> return
+        }
+        effectPalette.primary = blend(effectPalette.primary, tint, 0.42f)
+        effectPalette.secondary = blend(effectPalette.secondary, Color.WHITE, 0.25f)
+    }
+
+    private fun blend(a: Int, b: Int, t: Float): Int {
+        val u = 1f - t
+        return (0xFF shl 24) or
+            (((Color.red(a) * u + Color.red(b) * t).toInt() and 0xFF) shl 16) or
+            (((Color.green(a) * u + Color.green(b) * t).toInt() and 0xFF) shl 8) or
+            ((Color.blue(a) * u + Color.blue(b) * t).toInt() and 0xFF)
+    }
+
+    private fun localDailySeed(): Int {
+        val calendar = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
+        return calendar.get(java.util.Calendar.YEAR) * 1000 + calendar.get(java.util.Calendar.DAY_OF_YEAR)
+    }
+
+    private fun chooseUpgrade(choice: Int) {
+        when (choice) {
+            0 -> combat.grantShieldCharge()
+            1 -> orbMagnet = min(MAX_ORB_MAGNET_RADIUS, orbMagnet + ORB_MAGNET_UPGRADE_RADIUS)
+            2 -> highJumpUpgrade = min(0.3f, highJumpUpgrade + 0.12f)
+        }
+        gamePaused = false
+        uiScreen = UiScreen.PLAYING
+        runStartedAt = System.nanoTime() - (runElapsed * 1_000_000_000f).toLong()
+    }
+
+    private fun handleUiTap(px: Float, py: Float) {
+        when (uiScreen) {
+            UiScreen.TITLE -> when {
+                py in height * 0.35f..height * 0.48f && px < width * 0.5f -> beginRun(false)
+                py in height * 0.35f..height * 0.48f && px >= width * 0.5f -> beginRun(true)
+                py in height * 0.50f..height * 0.61f -> beginRun(true, daily = true)
+                py in height * 0.63f..height * 0.74f && px < width * 0.33f -> uiScreen = UiScreen.ARCHIVE
+                py in height * 0.63f..height * 0.74f && px < width * 0.49f -> uiScreen = UiScreen.LOADOUT
+                py in height * 0.63f..height * 0.74f && px < width * 0.65f -> { previousScreen = UiScreen.TITLE; uiScreen = UiScreen.SETTINGS }
+                py in height * 0.63f..height * 0.74f -> exitGame()
+                py > height * 0.75f -> toggleAutoMode()
+            }
+            UiScreen.TUTORIAL -> when {
+                py in height * 0.63f..height * 0.74f -> if (tutorialPage == 0) tutorialPage = 1 else {
+                    progress.tutorialSeen = true; uiScreen = UiScreen.PLAYING; gamePaused = false; runStartedAt = System.nanoTime()
+                }
+                py > height * 0.75f -> { progress.tutorialSeen = true; uiScreen = UiScreen.PLAYING; gamePaused = false; runStartedAt = System.nanoTime() }
+            }
+            UiScreen.PAUSED -> when {
+                py in height * 0.30f..height * 0.41f -> { uiScreen = UiScreen.PLAYING; gamePaused = false; runStartedAt = System.nanoTime() - (runElapsed * 1_000_000_000f).toLong() }
+                py in height * 0.42f..height * 0.53f -> { previousScreen = UiScreen.PAUSED; uiScreen = UiScreen.SETTINGS }
+                py in height * 0.54f..height * 0.65f -> uiScreen = UiScreen.PHOTO
+                py in height * 0.66f..height * 0.77f -> beginRun(endlessMode, dailyChallenge)
+                py > height * 0.78f -> { uiScreen = UiScreen.TITLE; gamePaused = true; gameOver = false; soundManager.startMusic("landing") }
+            }
+            UiScreen.SETTINGS -> when {
+                py in height * 0.25f..height * 0.36f -> {
+                    if (px in width * 0.43f..width * 0.57f) progress.musicEnabled = !progress.musicEnabled
+                    else progress.musicVolume = (progress.musicVolume + if (px > width * 0.5f) 0.1f else -0.1f).coerceIn(0f, 1f)
+                    soundManager.musicVolume = progress.musicVolume
+                    soundManager.musicEnabled = progress.musicEnabled
+                    if (progress.musicEnabled) soundManager.resumeMusic() else soundManager.stopMusic()
+                }
+                py in height * 0.37f..height * 0.47f -> {
+                    progress.effectsVolume = (progress.effectsVolume + if (px > width * 0.5f) 0.1f else -0.1f).coerceIn(0f, 1f)
+                    soundManager.effectsVolume = progress.effectsVolume
+                    soundManager.soundEnabled = progress.effectsVolume > 0f
+                }
+                py in height * 0.48f..height * 0.58f -> { progress.hapticsEnabled = !progress.hapticsEnabled; soundManager.hapticsEnabled = progress.hapticsEnabled }
+                py in height * 0.59f..height * 0.69f -> { progress.reducedEffects = !progress.reducedEffects; worldBackground.reducedEffects = progress.reducedEffects }
+                py in height * 0.70f..height * 0.80f -> {
+                    progress.reducedMotion = !progress.reducedMotion
+                    worldBackground.reducedMotion = progress.reducedMotion
+                }
+                py > height * 0.81f -> { uiScreen = previousScreen; gamePaused = uiScreen != UiScreen.PLAYING }
+            }
+            UiScreen.ARCHIVE -> if (py > height * 0.75f) uiScreen = UiScreen.TITLE
+            UiScreen.LOADOUT -> when {
+                py in height * 0.32f..height * 0.49f && px < width * 0.40f && progress.hasCosmetic(1) -> progress.selectedCosmetic = 1
+                py in height * 0.32f..height * 0.49f && px < width * 0.60f && progress.hasCosmetic(2) -> progress.selectedCosmetic = 2
+                py in height * 0.32f..height * 0.49f && progress.hasCosmetic(4) -> progress.selectedCosmetic = 3
+                py in height * 0.50f..height * 0.67f && progress.hasCosmetic(1) -> progress.companionEnabled = !progress.companionEnabled
+                py > height * 0.75f -> uiScreen = UiScreen.TITLE
+            }
+            UiScreen.PHOTO -> when {
+                py in height * 0.40f..height * 0.63f -> sharePhoto()
+                py > height * 0.64f -> uiScreen = UiScreen.PAUSED
+            }
+            UiScreen.UPGRADE -> when {
+                py in height * 0.38f..height * 0.68f && px < width * 0.40f -> chooseUpgrade(0)
+                py in height * 0.38f..height * 0.68f && px < width * 0.60f -> chooseUpgrade(1)
+                py in height * 0.38f..height * 0.68f -> chooseUpgrade(2)
+                py > height * 0.75f -> chooseUpgrade(-1)
+            }
+            UiScreen.RUN_END -> when {
+                py in height * 0.62f..height * 0.74f && px < width * 0.50f -> beginRun(endlessMode, dailyChallenge)
+                py in height * 0.62f..height * 0.74f -> shareRun()
+                py > height * 0.75f -> { uiScreen = UiScreen.TITLE; gameOver = false; soundManager.startMusic("landing") }
+            }
+            UiScreen.PLAYING -> Unit
+        }
+    }
+
+    private fun shareRun() {
+        val cardUri = createSignalPrint()
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = if (cardUri != null) "image/png" else "text/plain"
+            if (cardUri != null) {
+                putExtra(android.content.Intent.EXTRA_STREAM, cardUri)
+                clipData = android.content.ClipData.newUri(context.contentResolver, "Atmini Signal Print", cardUri)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            putExtra(android.content.Intent.EXTRA_TEXT,
+                " ${if (endlessMode) "ENDLESS ASCENSION" else "LUMINOUS ASCENSION"}\n" +
+                    "Score $score • Distance ${runDistance.toInt()}m • Best streak $bestCombo\n" +
+                    "Seed $runSeed • Can you beat my signal? #Atmini")
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(android.content.Intent.createChooser(intent, "Share your signal print").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    private fun sharePhoto() {
+        try {
+            val photo = Bitmap.createBitmap(width.coerceAtLeast(1), height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+            drawWorld(Canvas(photo), includeUi = false)
+            val dir = java.io.File(context.cacheDir, "signal-prints")
+            if (!dir.exists() && !dir.mkdirs()) return
+            val file = java.io.File(dir, "atmini-photo-${System.currentTimeMillis()}.png")
+            file.outputStream().use { photo.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            photo.recycle()
+            val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                clipData = android.content.ClipData.newUri(context.contentResolver, "Atmini Photo", uri)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(android.content.Intent.createChooser(intent, "Share your Atmini moment").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Exception) {
+            // Keep the frozen photo view available even if Android's share target is unavailable.
+        }
+    }
+
+    private fun createSignalPrint(): android.net.Uri? {
+        return try {
+            val card = Bitmap.createBitmap(1200, 675, Bitmap.Config.ARGB_8888)
+            val c = Canvas(card)
+            val p = Paint(Paint.ANTI_ALIAS_FLAG)
+            p.shader = LinearGradient(0f, 0f, 1200f, 675f,
+                intArrayOf(Color.rgb(16, 20, 60), effectPalette.primary, Color.rgb(16, 20, 60)),
+                null, Shader.TileMode.CLAMP)
+            c.drawRect(0f, 0f, 1200f, 675f, p)
+            p.shader = null
+            p.color = Color.argb(180, 9, 12, 35)
+            c.drawRoundRect(44f, 44f, 1156f, 631f, 38f, 38f, p)
+            p.style = Paint.Style.STROKE; p.strokeWidth = 4f; p.color = effectPalette.secondary
+            c.drawRoundRect(44f, 44f, 1156f, 631f, 38f, 38f, p)
+            p.style = Paint.Style.FILL
+            p.color = Color.WHITE; p.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); p.textAlign = Paint.Align.LEFT
+            p.textSize = 58f
+            c.drawText("SIGNAL PRINT", 92f, 136f, p)
+            p.textSize = 33f; p.color = effectPalette.secondary
+            c.drawText(if (endlessMode) "ENDLESS ASCENSION  •  LOOP ${(cameraX / EndlessRunDirector.WORLD_LOOP_LENGTH).toInt() + 1}" else "LUMINOUS ASCENSION", 96f, 195f, p)
+            p.color = Color.WHITE; p.textSize = 38f
+            c.drawText("SCORE   $score", 96f, 300f, p)
+            c.drawText("DISTANCE   ${runDistance.toInt()} M", 96f, 366f, p)
+            c.drawText("BEST STREAK   $bestCombo", 96f, 432f, p)
+            p.color = effectPalette.primary; p.textSize = 28f
+            c.drawText("SEED $runSeed     #ATMINI", 96f, 532f, p)
+            p.alpha = 230
+            c.drawBitmap(sprite, null, RectF(800f, 170f, 1080f, 570f), p)
+            val dir = java.io.File(context.cacheDir, "signal-prints")
+            if (!dir.exists() && !dir.mkdirs()) return null
+            val file = java.io.File(dir, "atmini-${runSeed}.png")
+            file.outputStream().use { card.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            card.recycle()
+            androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun steerAiFallback() {
+        val centerNow = x + sprite.width * CHAR_SCALE * 0.5f
+        var target: Orb? = null
+        var bestDistance = Float.MAX_VALUE
+        for (orb in orbs) {
+            if (orb.taken || orb.x < centerNow - 25f) continue
+            val d = abs(orb.x - centerNow)
+            if (d < bestDistance) { bestDistance = d; target = orb }
+        }
+        if (target == null) {
+            leftPressed = false; rightPressed = false
+            return
+        }
+        val center = x + sprite.width * CHAR_SCALE * 0.5f
+        val dx = target.x - center
+        leftPressed = dx < -24f
+        rightPressed = dx > 24f
+        if (grounded && target.y + 35f < y + sprite.height * CHAR_SCALE * 0.5f && abs(dx) < 520f) {
+            jumpPressed = true
+            jumpBuffer = JUMP_BUFFER_SECONDS
+        }
     }
 
     private fun update(dt: Float) {
-        if (gameOver) return
+        if (gameOver || gamePaused || uiScreen != UiScreen.PLAYING) return
+        runElapsed = (System.nanoTime() - runStartedAt) / 1_000_000_000f
 
-        if (isAutoMode) {
-            val activeOrbs = orbs.filter { !it.taken }.map { it.x to it.y }
+        if (endlessMode) {
+            appendEndlessSegments(cameraX + width * 2.7f + 2600f)
+            orbs.removeAll { it.x < cameraX - 800f }
+            val loop = (cameraX / EndlessRunDirector.WORLD_LOOP_LENGTH).toInt()
+            if (loop > lastMilestone) {
+                lastMilestone = loop
+                runEpoch++
+                aiPhase = AiPhase.PICK_ORB
+                aiBusySinceNanos = 0L
+                aiTargetX = null; aiTargetY = null
+                if (isAutoMode) {
+                    chooseUpgrade(if (combat.shieldChargesLeft == 0) 0 else 1)
+                } else {
+                    uiScreen = UiScreen.UPGRADE
+                    gamePaused = true
+                }
+                return
+            }
+        }
+
+        // Deterministic Kotlin steering keeps AI mode playable if local inference is
+        // unavailable, busy, cancelled by lifecycle, or temporarily cannot answer.
+        if (isAutoMode && aiPhase == AiPhase.BUSY && aiBusySinceNanos != 0L &&
+            System.nanoTime() - aiBusySinceNanos > AI_CALL_TIMEOUT_NANOS
+        ) {
+            runEpoch++ // Ignore a late result from the timed-out request.
+            aiFallbackActive = true
+            aiPhase = AiPhase.PICK_ORB
+            aiTargetX = null
+            aiTargetY = null
+            aiBusySinceNanos = 0L
+        }
+        if (isAutoMode && aiController?.isInitialized == true && !aiFallbackActive) {
+            val actorCenterX = x + sprite.width * CHAR_SCALE * 0.5f
+            val activeOrbs = if (aiPhase == AiPhase.PICK_ORB) {
+                orbs.filter { !it.taken && it.x >= actorCenterX - 25f }.map { it.x to it.y }
+            } else emptyList()
 
             when (aiPhase) {
                 AiPhase.PICK_ORB -> {
                     if (activeOrbs.isNotEmpty() && aiController?.isInitialized == true) {
                         aiPhase = AiPhase.BUSY
+                        aiBusySinceNanos = System.nanoTime()
+                        val requestEpoch = runEpoch
+                        val actorX = x; val actorY = y
                         scope.launch {
-                            val target = aiController?.decideTargetOrb(x, y, activeOrbs)
+                            val target = aiController?.decideTargetOrb(actorX, actorY, activeOrbs)
                             withContext(Dispatchers.Main) {
-                                if (isAutoMode) {
+                                if (requestEpoch == runEpoch && isAutoMode && uiScreen == UiScreen.PLAYING) {
                                     if (target != null) {
                                         aiTargetX = target.first
                                         aiTargetY = target.second
                                         aiPhase = AiPhase.DECIDE_APPROACH
                                     } else {
+                                        // A valid model can still return no usable target. Stop
+                                        // retrying it and hand the run to deterministic steering.
+                                        aiFallbackActive = true
                                         aiPhase = AiPhase.PICK_ORB
                                     }
+                                    aiBusySinceNanos = 0L
                                 }
                             }
                         }
@@ -178,10 +599,13 @@ class GameView(context: Context, var aiController: AiController?) : View(context
                     val ty = aiTargetY
                     if (tx != null && ty != null && aiController?.isInitialized == true) {
                         aiPhase = AiPhase.BUSY
+                        aiBusySinceNanos = System.nanoTime()
+                        val requestEpoch = runEpoch
+                        val actorX = x; val actorY = y
                         scope.launch {
-                            val decision = aiController?.decideApproach(x, y, tx, ty)
+                            val decision = aiController?.decideApproach(actorX, actorY, tx, ty)
                             withContext(Dispatchers.Main) {
-                                if (isAutoMode) {
+                                if (requestEpoch == runEpoch && isAutoMode && uiScreen == UiScreen.PLAYING) {
                                     if (decision == "AWAY") {
                                         aiTargetX = null
                                         aiTargetY = null
@@ -189,6 +613,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
                                     } else {
                                         aiPhase = AiPhase.MOVING
                                     }
+                                    aiBusySinceNanos = 0L
                                 }
                             }
                         }
@@ -217,16 +642,21 @@ class GameView(context: Context, var aiController: AiController?) : View(context
                     val ty = aiTargetY
                     if (tx != null && ty != null && aiController?.isInitialized == true) {
                         aiPhase = AiPhase.BUSY
+                        aiBusySinceNanos = System.nanoTime()
+                        val requestEpoch = runEpoch
+                        val actorX = x; val actorY = y
                         scope.launch {
-                            val decision = aiController?.decideJumpOrSkip(x, y, tx, ty)
+                            val decision = aiController?.decideJumpOrSkip(actorX, actorY, tx, ty)
                             withContext(Dispatchers.Main) {
-                                if (isAutoMode) {
+                                if (requestEpoch == runEpoch && isAutoMode && uiScreen == UiScreen.PLAYING) {
                                     if (decision == "JUMP" && grounded) {
                                         jumpPressed = true
+                                        jumpBuffer = JUMP_BUFFER_SECONDS
                                     }
                                     aiTargetX = null
                                     aiTargetY = null
                                     aiPhase = AiPhase.PICK_ORB
+                                    aiBusySinceNanos = 0L
                                 }
                             }
                         }
@@ -262,6 +692,10 @@ class GameView(context: Context, var aiController: AiController?) : View(context
             }
         }
 
+        if (isAutoMode && (aiController?.isInitialized != true || aiFallbackActive)) {
+            steerAiFallback()
+        }
+
         syncCombatBody()
         if (isAutoMode) {
             val reflex = combat.autoReflex()
@@ -285,9 +719,36 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         }
         vx = vx.coerceIn(-700f, 700f)
 
-        if (jumpPressed && grounded) {
-            vy = -jumpVelocity
+        if (leftPressed || vx < -20f) {
+            facingLeft = true
+        } else if (rightPressed || vx > 20f) {
+            facingLeft = false
+        }
+
+        val moving = abs(vx) > WALK_ANIMATION_MIN_SPEED
+        if (grounded) {
+            if (moving) {
+                val cadence = (abs(vx) / 520f).coerceIn(0.65f, 1.3f)
+                walkAnimationPhase = (walkAnimationPhase + dt * WALK_ANIMATION_FPS * cadence) % walkCycleSequence.size
+            } else {
+                walkAnimationPhase = (walkAnimationPhase * (1f - dt * 10f)).coerceAtLeast(0f)
+            }
+        } else {
+            // Airborne (jump): freeze pose if moving, decay to neutral pose if stationary
+            if (!moving) {
+                walkAnimationPhase = (walkAnimationPhase * (1f - dt * 10f)).coerceAtLeast(0f)
+            }
+        }
+        val isWalkingOrAirborne = moving || !grounded
+        val blendStep = dt / WALK_BLEND_SECONDS
+        walkAnimationBlend = (walkAnimationBlend + if (isWalkingOrAirborne) blendStep else -blendStep).coerceIn(0f, 1f)
+
+        jumpBuffer = (jumpBuffer - dt).coerceAtLeast(0f)
+        coyoteTime = if (grounded) COYOTE_SECONDS else (coyoteTime - dt).coerceAtLeast(0f)
+        if (jumpBuffer > 0f && (grounded || coyoteTime > 0f)) {
+            vy = -jumpVelocity * (1f + highJumpUpgrade)
             grounded = false
+            jumpBuffer = 0f
             jumpPressed = false
             soundManager.playJump()
             val charW = sprite.width * CHAR_SCALE
@@ -315,23 +776,57 @@ class GameView(context: Context, var aiController: AiController?) : View(context
 
         x = max(0f, x)
         cameraX = max(0f, x - width * 0.35f)
+        runDistance = max(runDistance, x)
+        val zone = ((cameraX + width * 0.5f) / 1600f).toInt().coerceAtLeast(0) % 5
+        if (zone != lastMusicZone) {
+            lastMusicZone = zone
+            progress.discoverZone(zone)
+            soundManager.playWorldZone(zone)
+        }
 
         val charCenterX = x + charW / 2f
         val charCenterY = y + charH / 2f
         for (orb in orbs) {
-            if (!orb.taken && abs(orb.x - charCenterX) < 65f && abs(orb.y - charCenterY) < 100f) {
+            if (orb.taken) continue
+            var dx = charCenterX - orb.x
+            var dy = charCenterY - orb.y
+            var distance = sqrt(dx * dx + dy * dy)
+            if (orbMagnet > 0f && distance < orbMagnet) {
+                val previousOrbX = orb.x
+                val pullSpeed = MAGNET_BASE_PULL_SPEED + (orbMagnet - distance) * MAGNET_PULL_FALLOFF
+                val pullDistance = min(distance, pullSpeed * dt)
+                if (distance > 0.001f) {
+                    orb.x += dx / distance * pullDistance
+                    orb.y += dy / distance * pullDistance
+                }
+                if (aiTargetX == previousOrbX) {
+                    aiTargetX = orb.x
+                    aiTargetY = orb.y
+                }
+                dx = charCenterX - orb.x
+                dy = charCenterY - orb.y
+                distance = sqrt(dx * dx + dy * dy)
+            }
+            if (abs(dx) < 65f && abs(dy) < 100f) {
                 orb.taken = true
-                score += if (orb.isBig) 5 else 1
+                score += if (orb.bonus) 10 else if (orb.isBig) 5 else 1
                 orbsCollected++
+                combo++
+                bestCombo = max(bestCombo, combo)
                 soundManager.playCollectOrb(orb.isBig)
                 particleSystem.emitOrbCollect(orb.x, orb.y, orb.isBig)
                 visualEffects.addShockwave(orb.x, orb.y, orb.isBig)
                 visualEffects.addScorePopup(orb.x, orb.y - 30f, orb.isBig)
+                if (isAutoMode && aiTargetX == orb.x) {
+                    runEpoch++
+                    aiTargetX = null; aiTargetY = null; aiPhase = AiPhase.PICK_ORB
+                    aiBusySinceNanos = 0L
+                }
             }
         }
 
         val wasGameOver = gameOver
-        val allOrbsTaken = orbs.isNotEmpty() && orbs.all { it.taken }
+        val allOrbsTaken = !endlessMode && orbs.isNotEmpty() && orbs.all { it.taken }
         syncCombatBody()
         combat.update(dt, cameraX, width)
         if (combat.body.consumeImpulse()) {
@@ -339,14 +834,23 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         }
         score = max(0, score + combat.consumeScoreDelta())
 
+        if (combat.isDefeated) cleanRun = false
         gameOver = combat.isDefeated || (allOrbsTaken && combat.isBossDefeated)
         if (gameOver && !wasGameOver && !combat.isDefeated) {
             soundManager.playGameComplete()
             particleSystem.emitVictoryShower(x + width * 0.2f, height * 0.3f)
         }
+        if (gameOver && !wasGameOver) {
+            val oldBest = if (endlessMode) progress.bestEndlessDistance else progress.bestCampaignScore
+            progress.recordRun(score, runDistance.toInt(), endlessMode, combat.isBossDefeated,
+                cleanRun, bestCombo, runElapsed.toInt())
+            newRecord = if (endlessMode) runDistance.toInt() > oldBest else score > oldBest
+            uiScreen = UiScreen.RUN_END
+            gamePaused = true
+        }
     }
 
-    private fun drawWorld(canvas: Canvas) {
+    private fun drawWorld(canvas: Canvas, includeUi: Boolean = true) {
         worldBackground.draw(canvas, width, height, height - 250f)
 
         canvas.save()
@@ -358,13 +862,16 @@ class GameView(context: Context, var aiController: AiController?) : View(context
             val radius = if (orb.isBig) 40f else 28f
             val pulse = radius + sin(System.nanoTime() / 120_000_000.0).toFloat() * 4f
 
-            paint.shader = RadialGradient(
-                orb.x, orb.y, pulse,
-                intArrayOf(Color.WHITE, if (orb.isBig) Color.rgb(255, 120, 120) else Color.rgb(120, 220, 255), Color.TRANSPARENT),
-                floatArrayOf(0f, 0.4f, 1f), Shader.TileMode.CLAMP
-            )
-            canvas.drawCircle(orb.x, orb.y, pulse, paint)
-            paint.shader = null
+            val hue = if (orb.bonus) Color.rgb(255, 220, 120) else if (orb.isBig) Color.rgb(255, 120, 120) else Color.rgb(120, 220, 255)
+            orbGlowPaint.color = hue
+            orbGlowPaint.alpha = 82
+            canvas.drawCircle(orb.x, orb.y, pulse, orbGlowPaint)
+            orbCorePaint.color = hue
+            orbCorePaint.alpha = 225
+            canvas.drawCircle(orb.x, orb.y, if (orb.isBig) 13f else 9f, orbCorePaint)
+            orbCorePaint.color = Color.WHITE
+            orbCorePaint.alpha = 235
+            canvas.drawCircle(orb.x - pulse * 0.16f, orb.y - pulse * 0.16f, if (orb.isBig) 4.5f else 3.5f, orbCorePaint)
         }
 
         combat.draw(canvas)
@@ -380,18 +887,49 @@ class GameView(context: Context, var aiController: AiController?) : View(context
             visualEffects.drawAiTargetingLaser(canvas, x + charW / 2f, y + charH / 2f, aiTargetX!!, aiTargetY!!)
         }
 
-        // Atmini Sprite (Squash, Stretch & Flip)
+        // Keep the walk-cycle pose, direction and cadence through jumps so the
+        // character does not snap back to a front-facing idle frame mid-stride.
         val drawW = sprite.width * CHAR_SCALE
         val drawH = sprite.height * CHAR_SCALE
-        val bob = if (grounded) 0f else sin(System.nanoTime() / 80_000_000.0).toFloat() * 4f
+        val walking = abs(vx) > WALK_ANIMATION_MIN_SPEED
+        val bob = if (grounded) {
+            if (walking) {
+                abs(sin((walkAnimationPhase / walkCycleSequence.size) * Math.PI.toFloat())) * -3.5f
+            } else {
+                0f
+            }
+        } else {
+            if (progress.reducedMotion) 0f else sin(System.nanoTime() / 80_000_000.0).toFloat() * 4f
+        }
+        val currentFrameIdx = walkCycleSequence[walkAnimationPhase.toInt() % walkCycleSequence.size]
+        val currentWalkFrame = walkFrames[currentFrameIdx]
         canvas.save()
-        if (vx < -20f) {
+        if (facingLeft) {
             canvas.scale(-1f, 1f, x + drawW / 2f, y + drawH / 2f)
         }
-        val dst = RectF(x, y + bob, x + drawW, y + drawH)
-        spritePaint.alpha = combat.playerAlpha()
-        canvas.drawBitmap(sprite, null, dst, spritePaint)
+        spriteRect.set(x, y + bob, x + drawW, y + drawH)
+        val playerAlpha = combat.playerAlpha()
+        if (walkAnimationBlend < 1f) {
+            spritePaint.alpha = (playerAlpha * (1f - walkAnimationBlend)).toInt()
+            canvas.drawBitmap(sprite, null, spriteRect, spritePaint)
+        }
+        if (walkAnimationBlend > 0f) {
+            spritePaint.alpha = (playerAlpha * walkAnimationBlend).toInt()
+            canvas.drawBitmap(currentWalkFrame, null, spriteRect, spritePaint)
+        }
+        spritePaint.alpha = playerAlpha
         canvas.restore()
+
+        if (progress.companionEnabled && progress.hasCosmetic(1)) {
+            val floatOffset = if (progress.reducedMotion) 0f else sin(System.nanoTime() / 260_000_000.0).toFloat() * 9f
+            orbGlowPaint.color = effectPalette.primary
+            orbGlowPaint.alpha = 75
+            canvas.drawLine(x + drawW, y + drawH * 0.33f, x + drawW + 22f, y + drawH * 0.33f + floatOffset, orbGlowPaint)
+            canvas.drawCircle(x + drawW + 28f, y + drawH * 0.33f + floatOffset, 16f, orbGlowPaint)
+            orbCorePaint.color = effectPalette.primary
+            orbCorePaint.alpha = 230
+            canvas.drawCircle(x + drawW + 28f, y + drawH * 0.33f + floatOffset, 8f, orbCorePaint)
+        }
 
         combat.drawOverlay(canvas)
 
@@ -400,6 +938,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
 
         canvas.restore()
 
+        if (includeUi && uiScreen != UiScreen.PHOTO) {
         // HUD & UI Controls Overlay
         textPaint.textSize = 46f
         if (isAutoMode) {
@@ -408,80 +947,253 @@ class GameView(context: Context, var aiController: AiController?) : View(context
             canvas.drawText("ATMINI", 28f, 58f, textPaint)
         }
         textPaint.textSize = 34f
-        canvas.drawText("Orbs: $orbsCollected / 30", 30f, 102f, textPaint)
+        canvas.drawText(if (endlessMode) "Orbs: $orbsCollected" else "Orbs: $orbsCollected / 30", 30f, 102f, textPaint)
         canvas.drawText("Score: $score", 30f, 142f, textPaint)
+        if (endlessMode) {
+            val loop = (cameraX / EndlessRunDirector.WORLD_LOOP_LENGTH).toInt() + 1
+            canvas.drawText("ASCENSION $loop  •  ${(runDistance / 1000f).toInt()} KM", 30f, 182f, textPaint)
+        }
 
         combat.drawHud(canvas, width)
-
-        // On-screen Buttons
-        drawButton(canvas, 20f, height - 160f, 140f, height - 20f, "◀")
-        drawButton(canvas, 160f, height - 160f, 280f, height - 20f, "▶")
-        drawButton(canvas, width / 2f - 75f, height - 160f, width / 2f + 75f, height - 20f, if (isAutoMode) "AUTO [ON]" else "AUTO")
-        drawButton(canvas, width - 400f, height - 160f, width - 220f, height - 20f, "BLAST")
-        drawButton(canvas, width - 200f, height - 160f, width - 20f, height - 20f, "JUMP")
-
-        if (gameOver) {
-            paint.color = Color.argb(120, 20, 10, 40)
-            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
-            textPaint.textSize = 60f
-            val title = if (combat.isDefeated) "ATMINI RESTS" else "RUN COMPLETE"
-            val tw = textPaint.measureText(title)
-            canvas.drawText(title, width / 2f - tw / 2f, height / 2f - 20f, textPaint)
-            textPaint.textSize = 34f
-            val subTw = textPaint.measureText("Tap anywhere to play again")
-            canvas.drawText("Tap anywhere to play again", width / 2f - subTw / 2f, height / 2f + 40f, textPaint)
+        if (combat.shieldChargesLeft > 0) {
+            textPaint.textSize = 28f
+            canvas.drawText("SHIELD ${combat.shieldChargesLeft}", width * 0.52f, 54f, textPaint)
         }
+
+        if (uiScreen == UiScreen.PLAYING) {
+            val bTop = height - 140f; val bBot = height - 20f
+            drawButton(canvas, width * 0.02f, bTop, width * 0.13f, bBot, "◀")
+            drawButton(canvas, width * 0.15f, bTop, width * 0.26f, bBot, "▶")
+            drawButton(canvas, width * 0.42f, bTop, width * 0.58f, bBot, if (isAutoMode) "AI ON" else "AI")
+            drawButton(canvas, width * 0.73f, bTop, width * 0.84f, bBot, "BLAST")
+            drawButton(canvas, width * 0.86f, bTop, width * 0.97f, bBot, "JUMP")
+            drawButton(canvas, width - 120f, 20f, width - 24f, 84f, "Ⅱ")
+        }
+        }
+
+        if (includeUi) drawUiOverlay(canvas)
     }
+
+    private fun drawUiOverlay(canvas: Canvas) {
+        if (uiScreen == UiScreen.PLAYING) return
+        paint.shader = null
+        paint.color = Color.argb(205, 10, 12, 34)
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+        val left = width * 0.16f; val right = width * 0.84f
+        val top = height * 0.12f; val bottom = height * 0.90f
+        paint.color = Color.argb(235, 20, 25, 58)
+        canvas.drawRoundRect(left, top, right, bottom, 34f, 34f, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 3f
+        paint.color = Color.argb(230, 100, 230, 255)
+        canvas.drawRoundRect(left, top, right, bottom, 34f, 34f, paint)
+        paint.style = Paint.Style.FILL
+        textPaint.textAlign = Paint.Align.CENTER
+        textPaint.color = Color.WHITE
+        when (uiScreen) {
+            UiScreen.TITLE -> {
+                drawCentered(canvas, "LUMINOUS ASCENSION", height * 0.22f, 48f)
+                drawCentered(canvas, "Atmini world journey", height * 0.29f, 25f)
+                drawButton(canvas, width * 0.20f, height * 0.35f, width * 0.48f, height * 0.47f, "STORY RUN")
+                drawButton(canvas, width * 0.52f, height * 0.35f, width * 0.80f, height * 0.47f, "ENDLESS")
+                drawButton(canvas, width * 0.28f, height * 0.50f, width * 0.72f, height * 0.60f, "DAILY ASCENSION")
+                drawButton(canvas, width * 0.18f, height * 0.63f, width * 0.32f, height * 0.73f, "ARCHIVE")
+                drawButton(canvas, width * 0.34f, height * 0.63f, width * 0.48f, height * 0.73f, "LOADOUT")
+                drawButton(canvas, width * 0.50f, height * 0.63f, width * 0.64f, height * 0.73f, "SETTINGS")
+                drawButton(canvas, width * 0.66f, height * 0.63f, width * 0.80f, height * 0.73f, "EXIT")
+                drawButton(canvas, width * 0.32f, height * 0.76f, width * 0.68f, height * 0.85f, "AI MODE  ${if (isAutoMode) "ON" else "OFF"}")
+            }
+            UiScreen.TUTORIAL -> {
+                drawCentered(canvas, if (tutorialPage == 0) "SYNC WITH ATMINI" else "READ THE SIGNALS", height * 0.25f, 44f)
+                drawCentered(canvas, if (tutorialPage == 0) "HOLD ◀ / ▶ TO MOVE   •   TAP JUMP TO LEAP" else "DODGE WARNINGS  •  BLAST THREATS  •  COLLECT ORBS", height * 0.44f, 26f)
+                drawCentered(canvas, "AI MODE CAN PLAY THE RUN FOR YOU; MANUAL CONTROLS ALWAYS WORK.", height * 0.54f, 21f)
+                drawButton(canvas, width * 0.34f, height * 0.63f, width * 0.66f, height * 0.73f, if (tutorialPage == 0) "NEXT" else "START")
+                drawButton(canvas, width * 0.38f, height * 0.76f, width * 0.62f, height * 0.84f, "SKIP")
+            }
+            UiScreen.PAUSED -> {
+                drawCentered(canvas, "RUN PAUSED", height * 0.23f, 48f)
+                drawButton(canvas, width * 0.32f, height * 0.30f, width * 0.68f, height * 0.40f, "RESUME")
+                drawButton(canvas, width * 0.32f, height * 0.42f, width * 0.68f, height * 0.52f, "SETTINGS")
+                drawButton(canvas, width * 0.32f, height * 0.54f, width * 0.68f, height * 0.64f, "PHOTO MODE")
+                drawButton(canvas, width * 0.32f, height * 0.66f, width * 0.68f, height * 0.76f, "RESTART")
+                drawButton(canvas, width * 0.32f, height * 0.78f, width * 0.68f, height * 0.87f, "TITLE")
+            }
+            UiScreen.SETTINGS -> {
+                drawCentered(canvas, "ACCESS / SIGNAL SETTINGS", height * 0.20f, 36f)
+                drawButton(canvas, width * 0.20f, height * 0.26f, width * 0.80f, height * 0.35f, "MUSIC  ${if (progress.musicEnabled) volumeLabel(progress.musicVolume) else "MUTED"}  ◀   ▶")
+                drawButton(canvas, width * 0.20f, height * 0.37f, width * 0.80f, height * 0.46f, "EFFECTS  ${volumeLabel(progress.effectsVolume)}  ◀   ▶")
+                drawButton(canvas, width * 0.20f, height * 0.48f, width * 0.80f, height * 0.57f, "HAPTICS  ${if (progress.hapticsEnabled) "ON" else "OFF"}")
+                drawButton(canvas, width * 0.20f, height * 0.59f, width * 0.80f, height * 0.68f, "LOW EFFECTS  ${if (progress.reducedEffects) "ON" else "OFF"}")
+                drawButton(canvas, width * 0.20f, height * 0.70f, width * 0.80f, height * 0.79f, "REDUCED MOTION  ${if (progress.reducedMotion) "ON" else "OFF"}")
+                drawButton(canvas, width * 0.38f, height * 0.81f, width * 0.62f, height * 0.88f, "BACK")
+            }
+            UiScreen.UPGRADE -> {
+                drawCentered(canvas, "ASCENSION $lastMilestone , CHOOSE A SIGNAL", height * 0.24f, 38f)
+                drawButton(canvas, width * 0.18f, height * 0.38f, width * 0.37f, height * 0.66f, "SHIELD CHARGE")
+                drawButton(canvas, width * 0.41f, height * 0.38f, width * 0.59f, height * 0.66f, "ORB MAGNET")
+                drawButton(canvas, width * 0.63f, height * 0.38f, width * 0.82f, height * 0.66f, "PHASE LEAP")
+                drawCentered(canvas, "MOVEMENT SPEED STAYS THE SAME. TAKE A BREATHER OR CHOOSE WHEN READY.", height * 0.72f, 19f)
+                drawButton(canvas, width * 0.38f, height * 0.78f, width * 0.62f, height * 0.86f, "SKIP")
+            }
+            UiScreen.RUN_END -> {
+                drawCentered(canvas, if (combat.isDefeated) "SIGNAL LOST" else "ASCENSION CLEARED", height * 0.22f, 40f)
+                drawCentered(canvas, "SCORE  $score     DISTANCE  ${runDistance.toInt()} M", height * 0.33f, 28f)
+                drawCentered(canvas, "STREAK  $bestCombo  •  TIME  ${runElapsed.toInt()} SEC  •  ${if (cleanRun) "CLEAN" else "HIT RECORDED"}", height * 0.41f, 21f)
+                drawCentered(canvas, "PERSONAL BEST STREAK  ${progress.bestStreak}  •  CLEAN RUNS  ${progress.cleanRuns}", height * 0.48f, 20f)
+                if (dailyChallenge) drawCentered(canvas, "DAILY SEED  $runSeed", height * 0.54f, 19f)
+                drawCentered(canvas, if (newRecord) "NEW PERSONAL RECORD" else "BEST  ${if (endlessMode) progress.bestEndlessDistance else progress.bestCampaignScore}", height * 0.59f, 22f)
+                drawButton(canvas, width * 0.20f, height * 0.65f, width * 0.48f, height * 0.75f, "RUN AGAIN")
+                drawButton(canvas, width * 0.52f, height * 0.65f, width * 0.80f, height * 0.75f, "SHARE RUN")
+                drawButton(canvas, width * 0.38f, height * 0.78f, width * 0.62f, height * 0.87f, "TITLE")
+            }
+            UiScreen.ARCHIVE -> {
+                drawCentered(canvas, "ASCENSION ARCHIVE", height * 0.22f, 40f)
+                val names = arrayOf("DAWN OF AWAKENING", "VERDANT ARCOLOGIES", "SEA OF LIGHT", "AURORA HEIGHTS", "CELESTIAL SINGULARITY")
+                val lore = arrayOf("A city waits beneath rose-gold light.", "Gardens reconnect the old towers.", "Crystal spires carry a signal across the sea.", "The sky remembers how to sing.", "Atmini reaches the heart of the loop.")
+                for (i in names.indices) {
+                    val y = height * (0.31f + i * 0.08f)
+                    drawCentered(canvas, if (progress.hasDiscoveredZone(i)) "${names[i]}  •  ${lore[i]}" else "SIGNAL ${i + 1}  •  UNDISCOVERED", y, 18f)
+                }
+                drawButton(canvas, width * 0.38f, height * 0.78f, width * 0.62f, height * 0.86f, "BACK")
+            }
+            UiScreen.LOADOUT -> {
+                drawCentered(canvas, "SIGNAL LOADOUT", height * 0.22f, 40f)
+                drawButton(canvas, width * 0.18f, height * 0.32f, width * 0.37f, height * 0.47f, if (progress.hasCosmetic(1)) "CYAN FLUX" else "LOCKED")
+                drawButton(canvas, width * 0.41f, height * 0.32f, width * 0.59f, height * 0.47f, if (progress.hasCosmetic(2)) "VIOLET GHOST" else "LOCKED")
+                drawButton(canvas, width * 0.63f, height * 0.32f, width * 0.82f, height * 0.47f, if (progress.hasCosmetic(4)) "SOLAR GOLD" else "LOCKED")
+                drawButton(canvas, width * 0.28f, height * 0.51f, width * 0.72f, height * 0.64f, "COMPANION  ${if (progress.companionEnabled) "ON" else "OFF"}")
+                drawCentered(canvas, "UNLOCK COSMETICS THROUGH RUNS, SCORE, AND BOSS WINS.", height * 0.71f, 19f)
+                drawButton(canvas, width * 0.38f, height * 0.77f, width * 0.62f, height * 0.86f, "BACK")
+            }
+            UiScreen.PHOTO -> {
+                drawCentered(canvas, "PHOTO MODE // FREEZE THE MOMENT", height * 0.25f, 36f)
+                drawButton(canvas, width * 0.28f, height * 0.42f, width * 0.72f, height * 0.58f, "CAPTURE & SHARE")
+                drawButton(canvas, width * 0.38f, height * 0.68f, width * 0.62f, height * 0.80f, "BACK")
+            }
+            UiScreen.PLAYING -> Unit
+        }
+        textPaint.textAlign = Paint.Align.LEFT
+    }
+
+    private fun drawCentered(canvas: Canvas, text: String, y: Float, size: Float) {
+        textPaint.textSize = size
+        canvas.drawText(text, width * 0.5f, y, textPaint)
+    }
+
+    private fun volumeLabel(value: Float) = "${(value * 100f).toInt()}%"
 
     private fun drawButton(canvas: Canvas, l: Float, t: Float, r: Float, b: Float, label: String) {
         paint.color = Color.argb(145, 35, 45, 60)
-        canvas.drawRoundRect(l, t, r, b, 26f, 26f, paint)
+        canvas.drawRoundRect(l, t, r, b, 22f, 22f, paint)
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = 2f
         paint.color = Color.argb(170, 150, 180, 210)
-        canvas.drawRoundRect(l, t, r, b, 26f, 26f, paint)
+        canvas.drawRoundRect(l, t, r, b, 22f, 22f, paint)
         paint.style = Paint.Style.FILL
-        textPaint.textSize = if (label == "JUMP" || label == "BLAST" || label.contains("AUTO")) 24f else 48f
-        val tw = textPaint.measureText(label)
+        val baseTextSize = if (label.length <= 5) 28f else 22f
+        textPaint.textSize = baseTextSize
+        val naturalTextWidth = textPaint.measureText(label)
+        val allowedTextWidth = (r - l - 20f).coerceAtLeast(1f)
+        if (naturalTextWidth > allowedTextWidth) {
+            textPaint.textSize = baseTextSize * (allowedTextWidth / naturalTextWidth)
+        }
         val fm = textPaint.fontMetrics
         val ty = t + (b - t) / 2f - (fm.ascent + fm.descent) / 2f
-        canvas.drawText(label, (l + r - tw) / 2f, ty, textPaint)
+        val oldAlign = textPaint.textAlign
+        textPaint.textAlign = Paint.Align.CENTER
+        canvas.drawText(label, (l + r) * 0.5f, ty, textPaint)
+        textPaint.textAlign = oldAlign
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (uiScreen != UiScreen.PLAYING) {
+            if (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_BUTTON_START) {
+                handleUiTap(width * 0.5f, height * 0.55f)
+                return true
+            }
+            return super.onKeyDown(keyCode, event)
+        }
+        when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_A -> leftPressed = true
+            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_D -> rightPressed = true
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_SPACE, KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_W -> {
+                jumpPressed = true; jumpBuffer = JUMP_BUFFER_SECONDS
+            }
+            KeyEvent.KEYCODE_BUTTON_X, KeyEvent.KEYCODE_F -> { syncCombatBody(); combat.fireManual() }
+            KeyEvent.KEYCODE_ESCAPE, KeyEvent.KEYCODE_BUTTON_START -> { uiScreen = UiScreen.PAUSED; gamePaused = true }
+            KeyEvent.KEYCODE_BUTTON_Y -> toggleAutoMode()
+            else -> return super.onKeyDown(keyCode, event)
+        }
+        return true
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_A -> leftPressed = false
+            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_D -> rightPressed = false
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_SPACE, KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_W -> jumpPressed = false
+            else -> return super.onKeyUp(keyCode, event)
+        }
+        return true
+    }
+
+    private fun toggleAutoMode() {
+        setAutoMode(!isAutoMode)
+    }
+
+    private fun setAutoMode(enabled: Boolean) {
+        runEpoch++
+        isAutoMode = enabled
+        aiBusySinceNanos = 0L
+        aiFallbackActive = false
+        if (isAutoMode && !aiInitializationStarted) {
+            aiInitializationStarted = true
+            scope.launch { aiController?.initialize() }
+        }
+        soundManager.playAiMode(isAutoMode)
+        if (!isAutoMode) {
+            aiPhase = AiPhase.PICK_ORB
+            aiTargetX = null
+            aiTargetY = null
+        }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                if (gameOver) return true
                 val px = event.x
                 val py = event.y
+                if (event.actionMasked == MotionEvent.ACTION_DOWN && uiScreen != UiScreen.PLAYING) {
+                    handleUiTap(px, py)
+                    return true
+                }
+                if (uiScreen != UiScreen.PLAYING) return true
+                if (event.actionMasked == MotionEvent.ACTION_DOWN && px > width - 160f && py < 100f) {
+                    pauseRun()
+                    return true
+                }
                 if (event.actionMasked == MotionEvent.ACTION_DOWN &&
-                    px in (width - 400f)..(width - 220f) && py > height - 200f) {
+                    px in (width * 0.68f)..(width * 0.845f) && py > height - 180f) {
                     syncCombatBody(); combat.fireManual()
                 }
-                leftPressed = px < 140f && py > height - 200f
-                rightPressed = px in 160f..280f && py > height - 200f
-                if (px in (width / 2f - 75f)..(width / 2f + 75f) && py > height - 200f) {
+                leftPressed = px < width * 0.135f && py > height - 180f
+                rightPressed = px in (width * 0.135f)..(width * 0.30f) && py > height - 180f
+                if (px in (width * 0.38f)..(width * 0.62f) && py > height - 180f) {
                     // Toggle event triggered once on down
                     if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-                        isAutoMode = !isAutoMode
-                        soundManager.playAiMode(isAutoMode)
-                        if (!isAutoMode) {
-                            aiPhase = AiPhase.PICK_ORB
-                            aiTargetX = null
-                            aiTargetY = null
-                        }
+                        toggleAutoMode()
                     }
                 }
-                if (px > width - 200f && py > height - 200f) jumpPressed = true
+                if (px > width * 0.845f && py > height - 180f) {
+                    jumpPressed = true
+                    jumpBuffer = JUMP_BUFFER_SECONDS
+                }
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (gameOver) {
-                    reset()
-                    return true
-                }
                 leftPressed = false
                 rightPressed = false
+                jumpPressed = false
                 return true
             }
         }
@@ -491,5 +1203,15 @@ class GameView(context: Context, var aiController: AiController?) : View(context
     companion object {
         private const val ORIGINAL_SCALE = 0.46f
         private const val CHAR_SCALE = 0.46f * 0.42f   // 25% smaller
+        private const val JUMP_BUFFER_SECONDS = 0.12f
+        private const val COYOTE_SECONDS = 0.10f
+        private const val AI_CALL_TIMEOUT_NANOS = 2_000_000_000L
+        private const val WALK_ANIMATION_FPS = 9f
+        private const val WALK_ANIMATION_MIN_SPEED = 55f
+        private const val WALK_BLEND_SECONDS = 0.12f
+        private const val MAX_ORB_MAGNET_RADIUS = 480f
+        private const val ORB_MAGNET_UPGRADE_RADIUS = 240f
+        private const val MAGNET_BASE_PULL_SPEED = 200f
+        private const val MAGNET_PULL_FALLOFF = 2f
     }
 }

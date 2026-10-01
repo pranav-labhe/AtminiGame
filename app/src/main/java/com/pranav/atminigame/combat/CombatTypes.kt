@@ -108,6 +108,7 @@ interface CombatListener {
     fun onThreatPurified(kind: ThreatKind) {}
     fun onDecoyTouched() {}
     fun onPlayerHit(harmonyLeft: Int) {}
+    fun onShieldBlocked(chargesLeft: Int) {}
     fun onDefeated() {}
     fun onBossAwakened() {}
     fun onBossDefeated() {}

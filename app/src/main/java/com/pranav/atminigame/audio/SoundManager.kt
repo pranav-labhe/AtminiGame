@@ -26,15 +26,20 @@ class SoundManager(context: Context) {
 
     var soundEnabled: Boolean = true
     var hapticsEnabled: Boolean = true
+    var musicEnabled: Boolean = true
+    var musicVolume: Float = 0.72f
+        set(value) { field = value.coerceIn(0f, 1f); musicEngine.musicVolume = field }
+    var effectsVolume: Float = 0.9f
+        set(value) { field = value.coerceIn(0f, 1f); musicEngine.effectsVolume = field }
 
     private var currentTrackId: String? = null
     private var lastMoveSoundTime = 0L
 
     fun startMusic(trackId: String) {
         currentTrackId = trackId
-        if (soundEnabled) {
+        if (musicEnabled) {
             musicEngine.play(trackId)
-        }
+        } else musicEngine.stop()
     }
 
     fun stopMusic() {
@@ -42,8 +47,10 @@ class SoundManager(context: Context) {
     }
 
     fun resumeMusic() {
-        val tid = currentTrackId ?: "game"
-        startMusic(tid)
+        if (musicEnabled) {
+            val tid = currentTrackId ?: "game"
+            startMusic(tid)
+        }
     }
 
     fun playCollectOrb(isBig: Boolean) {
@@ -93,6 +100,17 @@ class SoundManager(context: Context) {
             startMusic("game")
         }
         vibrate(30L)
+    }
+
+    fun playWorldZone(zone: Int) {
+        val track = when (((zone % 5) + 5) % 5) {
+            0 -> "zone_dawn"
+            1 -> "zone_garden"
+            2 -> "zone_ocean"
+            3 -> "zone_aurora"
+            else -> "zone_celestial"
+        }
+        if (musicEnabled && currentTrackId != track) startMusic(track)
     }
 
     private fun vibrate(durationMs: Long) {

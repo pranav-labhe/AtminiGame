@@ -32,4 +32,19 @@ class MainActivity : Activity() {
         super.onDestroy()
         aiController.close()
     }
+
+    override fun onPause() {
+        if (::gameView.isInitialized) gameView.onHostPaused()
+        super.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::gameView.isInitialized) gameView.onHostResumed()
+    }
+
+    @Deprecated("Deprecated in Android; still routed here for compatibility with minSdk 23")
+    override fun onBackPressed() {
+        if (!::gameView.isInitialized || !gameView.handleBackPressed()) super.onBackPressed()
+    }
 }

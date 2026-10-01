@@ -8,8 +8,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class AiController(private val context: Context, private val modelPath: String) {
+    @Volatile
     private var llmInference: LlmInference? = null
 
+    @Volatile
     var isInitialized = false
 
     private val mutex = Mutex()
@@ -154,7 +156,13 @@ class AiController(private val context: Context, private val modelPath: String) 
     }
 
     fun close() {
-        llmInference?.close()
+        val inference = llmInference
         llmInference = null
+        isInitialized = false
+        try {
+            inference?.close()
+        } catch (e: Exception) {
+            Log.w("AiController", "LLM cleanup failed safely: ${e.message}")
+        }
     }
 }

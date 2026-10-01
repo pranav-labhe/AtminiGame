@@ -41,6 +41,7 @@ class CombatDirector(
     var harmony = MAX_HARMONY
         private set
     val maxHarmony: Int get() = MAX_HARMONY
+    val shieldChargesLeft: Int get() = shieldCharges
     var isDefeated = false
         private set
     /** True when the final guardian has been purified (or the run has no guardian). */
@@ -62,6 +63,7 @@ class CombatDirector(
 
     private var time = 0f
     private var invuln = 0f
+    private var shieldCharges = 0
     private var pendingScore = 0
     private var cameraX = 0f
     private var viewW = 0
@@ -89,6 +91,7 @@ class CombatDirector(
         harmony = MAX_HARMONY
         isDefeated = false
         invuln = 0f
+        shieldCharges = 0
         pendingScore = 0
         popCount = 0
         laser.reset()
@@ -132,6 +135,44 @@ class CombatDirector(
         spawnPlanned(guardian, ThreatKind.LAST_OVERSEER, lastOrb + BOSS_OFFSET, rnd)
         boss = guardian
         isBossDefeated = false
+    }
+
+    /** Add one deterministic, bounded endless chunk; expired threats are recycled in update(). */
+    fun appendEndlessChunk(orbXs: FloatArray, bossX: Float?, seed: Int) {
+        if (orbXs.size > 1) {
+            val sorted = orbXs.copyOf().also { it.sort() }
+            val rnd = Random(seed)
+            var lastGroundX = Float.NEGATIVE_INFINITY
+            for (i in 0 until sorted.lastIndex) {
+                val x = (sorted[i] + sorted[i + 1]) * 0.5f
+                val loop = (x / (ZONE_LENGTH * ZONE_COUNT)).toInt()
+                val skipChance = (SKIP_SLOT_CHANCE - loop * 0.04f).coerceAtLeast(0.22f)
+                if (x < FIRST_THREAT_X || rnd.nextFloat() < skipChance) continue
+                val zone = ((x / ZONE_LENGTH).toInt() % ZONE_COUNT)
+                var kind = pickKind(zone, rnd.nextFloat()) ?: continue
+                if (isGroundHazard(kind) &&
+                    (sorted[i + 1] - sorted[i] < MIN_ORB_GAP_FOR_GROUND || x - lastGroundX < MIN_GROUND_SLOT_GAP * 260f)
+                ) {
+                    kind = if (zone >= 1 && rnd.nextFloat() < 0.5f) ThreatKind.GLITCH_DRONE else continue
+                }
+                val slot = threats.firstOrNull { !it.active } ?: continue
+                spawnPlanned(slot, kind, x, rnd)
+                if (isGroundHazard(kind)) lastGroundX = x
+            }
+        }
+        if (bossX != null) {
+            val slot = threats.firstOrNull { !it.active }
+            if (slot != null) {
+                val rnd = Random(seed xor 0x61C88647)
+                spawnPlanned(slot, ThreatKind.LAST_OVERSEER, bossX, rnd)
+                boss = slot
+                isBossDefeated = false
+            }
+        }
+    }
+
+    fun grantShieldCharge() {
+        shieldCharges = (shieldCharges + 1).coerceAtMost(3)
     }
 
     /** Frees cached drawing resources (call from onDetachedFromWindow). */
@@ -188,7 +229,10 @@ class CombatDirector(
         updatePopups(step)
 
         val gY = body.groundY
-        for (t in threats) if (t.active) updateThreat(t, step, gY)
+        for (t in threats) if (t.active) {
+            if (t.kind != ThreatKind.LAST_OVERSEER && t.x < cameraX - CULL_MARGIN) t.clear()
+            else updateThreat(t, step, gY)
+        }
         for (p in pulses) if (p.active) updatePulse(p, step, gY)
 
         if (!isDefeated) resolveCollisions()
@@ -363,11 +407,13 @@ class CombatDirector(
             }
             STATE_VOLLEY -> {
                 t.timer2 -= step
-                if (t.timer2 <= 0f && t.shots < BOSS_VOLLEY_SHOTS) {
-                    val spread = (t.shots - 1) * 40f
+                val pattern = ((t.phase / TWO_PI) * 3f).toInt().coerceIn(0, 2)
+                val shotsThisVolley = when (pattern) { 0 -> 3; 1 -> 2; else -> 4 }
+                if (t.timer2 <= 0f && t.shots < shotsThisVolley) {
+                    val spread = (t.shots - (shotsThisVolley - 1) * 0.5f) * (if (pattern == 2) 62f else 48f)
                     firePulse(t.x - t.radius * 0.5f, t.y, body.centerX, body.centerY + spread, PULSE_SPEED)
                     t.shots++
-                    t.timer2 = 0.35f
+                    t.timer2 = if (pattern == 1) 0.48f else 0.35f
                 }
                 if (t.timer <= 0f) {
                     t.state = STATE_OPEN
@@ -454,6 +500,15 @@ class CombatDirector(
 
     private fun hitPlayer(source: Threat) {
         lastHitBy = source.kind
+        if (shieldCharges > 0) {
+            shieldCharges--
+            invuln = INVULN_TIME
+            val dir = if (body.centerX < source.x) -1f else 1f
+            body.requestImpulse(dir * KNOCK_VX * 0.55f, KNOCK_VY * 0.6f)
+            effects.addShockwave(body.centerX, body.centerY, true)
+            listener?.onShieldBlocked(shieldCharges)
+            return
+        }
         harmony--
         invuln = INVULN_TIME
         val dir = if (body.centerX < source.x) -1f else 1f
@@ -701,6 +756,7 @@ class CombatDirector(
         const val PURIFY_RISE = 40f
         const val POPUP_LIFE = 0.9f
         const val CULL_MARGIN = 200f
+        const val ENDLESS_RECYCLE_MARGIN = 900f
         const val SCREEN_MARGIN = 40f
         const val MAX_DT = 0.05f
         const val TIME_WRAP = 3600f
