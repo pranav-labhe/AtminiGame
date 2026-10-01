@@ -62,7 +62,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
     private var facingLeft = false
     private var walkAnimationPhase = 0f
     private var walkAnimationBlend = 0f
-    private val walkCycleSequence = intArrayOf(0, 1, 2, 3, 4, 3, 2, 1)
+    private var dustTimer = 0f
     private var lastMusicZone = -1
     private var aiBusySinceNanos = 0L
     private var aiFallbackActive = false
@@ -74,12 +74,12 @@ class GameView(context: Context, var aiController: AiController?) : View(context
     private val orbCorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val spriteRect = RectF()
     private val sprite: Bitmap = BitmapFactory.decodeResource(resources, R.drawable.atministanding)
-    // The first five frames form one consistent side-view cycle. The second
-    // row is a different camera angle, so it is kept as source art but not
-    // interleaved into the in-game loop.
+    // Full 10-frame side-view walk cycle loop
     private val walkFrames: Array<Bitmap> = intArrayOf(
         R.drawable.atmini_walk_01, R.drawable.atmini_walk_02, R.drawable.atmini_walk_03,
-        R.drawable.atmini_walk_04, R.drawable.atmini_walk_05
+        R.drawable.atmini_walk_04, R.drawable.atmini_walk_05, R.drawable.atmini_walk_06,
+        R.drawable.atmini_walk_07, R.drawable.atmini_walk_08, R.drawable.atmini_walk_09,
+        R.drawable.atmini_walk_10
     ).map { BitmapFactory.decodeResource(resources, it) }.toTypedArray()
 
     // Raises the jump by exactly the height she lost, so every orb stays reachable.
@@ -711,11 +711,17 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         vx += direction * 1900f * dt
         if (direction == 0f) {
             vx *= 0.82f
+            dustTimer = 0f
         } else {
             soundManager.playMove(direction > 0f)
-            // Emit slight running dust particles
-            val charW = sprite.width * CHAR_SCALE
-            particleSystem.emitJumpThruster(x + charW / 2f, y + sprite.height * CHAR_SCALE)
+            if (grounded) {
+                dustTimer += dt
+                if (dustTimer >= 0.14f) {
+                    dustTimer = 0f
+                    val charW = sprite.width * CHAR_SCALE
+                    particleSystem.emitFootstepDust(x + charW / 2f, y + sprite.height * CHAR_SCALE, direction)
+                }
+            }
         }
         vx = vx.coerceIn(-700f, 700f)
 
@@ -728,15 +734,15 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         val moving = abs(vx) > WALK_ANIMATION_MIN_SPEED
         if (grounded) {
             if (moving) {
-                val cadence = (abs(vx) / 520f).coerceIn(0.65f, 1.3f)
-                walkAnimationPhase = (walkAnimationPhase + dt * WALK_ANIMATION_FPS * cadence) % walkCycleSequence.size
+                val strideProgress = (abs(vx) * dt / STRIDE_PIXELS) * walkFrames.size
+                walkAnimationPhase = (walkAnimationPhase + strideProgress) % walkFrames.size
             } else {
-                walkAnimationPhase = (walkAnimationPhase * (1f - dt * 10f)).coerceAtLeast(0f)
+                walkAnimationPhase = (walkAnimationPhase * (1f - dt * 8f)).coerceAtLeast(0f)
             }
         } else {
             // Airborne (jump): freeze pose if moving, decay to neutral pose if stationary
             if (!moving) {
-                walkAnimationPhase = (walkAnimationPhase * (1f - dt * 10f)).coerceAtLeast(0f)
+                walkAnimationPhase = (walkAnimationPhase * (1f - dt * 8f)).coerceAtLeast(0f)
             }
         }
         val isWalkingOrAirborne = moving || !grounded
@@ -745,11 +751,12 @@ class GameView(context: Context, var aiController: AiController?) : View(context
 
         jumpBuffer = (jumpBuffer - dt).coerceAtLeast(0f)
         coyoteTime = if (grounded) COYOTE_SECONDS else (coyoteTime - dt).coerceAtLeast(0f)
-        if (jumpBuffer > 0f && (grounded || coyoteTime > 0f)) {
+        if ((jumpPressed || jumpBuffer > 0f) && (grounded || coyoteTime > 0f)) {
             vy = -jumpVelocity * (1f + highJumpUpgrade)
             grounded = false
             jumpBuffer = 0f
             jumpPressed = false
+            coyoteTime = 0f
             soundManager.playJump()
             val charW = sprite.width * CHAR_SCALE
             val charH = sprite.height * CHAR_SCALE
@@ -891,31 +898,43 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         // character does not snap back to a front-facing idle frame mid-stride.
         val drawW = sprite.width * CHAR_SCALE
         val drawH = sprite.height * CHAR_SCALE
-        val walking = abs(vx) > WALK_ANIMATION_MIN_SPEED
+        val moving = abs(vx) > WALK_ANIMATION_MIN_SPEED
         val bob = if (grounded) {
-            if (walking) {
-                abs(sin((walkAnimationPhase / walkCycleSequence.size) * Math.PI.toFloat())) * -3.5f
+            if (moving) {
+                abs(sin((walkAnimationPhase / walkFrames.size) * (2f * Math.PI.toFloat()))) * -3.0f
             } else {
                 0f
             }
         } else {
             if (progress.reducedMotion) 0f else sin(System.nanoTime() / 80_000_000.0).toFloat() * 4f
         }
-        val currentFrameIdx = walkCycleSequence[walkAnimationPhase.toInt() % walkCycleSequence.size]
-        val currentWalkFrame = walkFrames[currentFrameIdx]
+
+        val phase = walkAnimationPhase % walkFrames.size
+        val frameIdx1 = phase.toInt()
+        val frameIdx2 = (frameIdx1 + 1) % walkFrames.size
+        val frameFraction = phase - frameIdx1
+
+        val frame1 = walkFrames[frameIdx1]
+        val frame2 = walkFrames[frameIdx2]
+
         canvas.save()
         if (facingLeft) {
             canvas.scale(-1f, 1f, x + drawW / 2f, y + drawH / 2f)
         }
         spriteRect.set(x, y + bob, x + drawW, y + drawH)
         val playerAlpha = combat.playerAlpha()
+        val totalWalkAlpha = playerAlpha * walkAnimationBlend
+
         if (walkAnimationBlend < 1f) {
             spritePaint.alpha = (playerAlpha * (1f - walkAnimationBlend)).toInt()
             canvas.drawBitmap(sprite, null, spriteRect, spritePaint)
         }
-        if (walkAnimationBlend > 0f) {
-            spritePaint.alpha = (playerAlpha * walkAnimationBlend).toInt()
-            canvas.drawBitmap(currentWalkFrame, null, spriteRect, spritePaint)
+        if (totalWalkAlpha > 0f) {
+            spritePaint.alpha = (totalWalkAlpha * (1f - frameFraction)).toInt()
+            canvas.drawBitmap(frame1, null, spriteRect, spritePaint)
+
+            spritePaint.alpha = (totalWalkAlpha * frameFraction).toInt()
+            canvas.drawBitmap(frame2, null, spriteRect, spritePaint)
         }
         spritePaint.alpha = playerAlpha
         canvas.restore()
@@ -1159,44 +1178,61 @@ class GameView(context: Context, var aiController: AiController?) : View(context
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                val px = event.x
-                val py = event.y
-                if (event.actionMasked == MotionEvent.ACTION_DOWN && uiScreen != UiScreen.PLAYING) {
-                    handleUiTap(px, py)
-                    return true
-                }
-                if (uiScreen != UiScreen.PLAYING) return true
-                if (event.actionMasked == MotionEvent.ACTION_DOWN && px > width - 160f && py < 100f) {
-                    pauseRun()
-                    return true
-                }
-                if (event.actionMasked == MotionEvent.ACTION_DOWN &&
-                    px in (width * 0.68f)..(width * 0.845f) && py > height - 180f) {
-                    syncCombatBody(); combat.fireManual()
-                }
-                leftPressed = px < width * 0.135f && py > height - 180f
-                rightPressed = px in (width * 0.135f)..(width * 0.30f) && py > height - 180f
-                if (px in (width * 0.38f)..(width * 0.62f) && py > height - 180f) {
-                    // Toggle event triggered once on down
-                    if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+        val action = event.actionMasked
+        val actionIdx = event.actionIndex
+
+        if (action == MotionEvent.ACTION_DOWN && uiScreen != UiScreen.PLAYING) {
+            handleUiTap(event.getX(0), event.getY(0))
+            return true
+        }
+
+        if (uiScreen != UiScreen.PLAYING) return true
+
+        var newLeft = false
+        var newRight = false
+
+        for (p in 0 until event.pointerCount) {
+            if ((action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_UP) && p == actionIdx) {
+                continue
+            }
+            val px = event.getX(p)
+            val py = event.getY(p)
+
+            val isNewPress = (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) && p == actionIdx
+
+            // Pause button (top right corner)
+            if (isNewPress && px > width - 140f && py < 100f) {
+                pauseRun()
+                return true
+            }
+
+            // Directional & Action controls (bottom bar)
+            if (py > height - 200f) {
+                if (px < width * 0.135f) {
+                    newLeft = true
+                } else if (px in (width * 0.135f)..(width * 0.30f)) {
+                    newRight = true
+                } else if (px in (width * 0.38f)..(width * 0.62f)) {
+                    if (isNewPress) {
                         toggleAutoMode()
                     }
+                } else if (px in (width * 0.68f)..(width * 0.845f)) {
+                    if (isNewPress) {
+                        syncCombatBody()
+                        combat.fireManual()
+                    }
+                } else if (px > width * 0.845f) {
+                    if (isNewPress) {
+                        jumpPressed = true
+                        jumpBuffer = JUMP_BUFFER_SECONDS
+                    }
                 }
-                if (px > width * 0.845f && py > height - 180f) {
-                    jumpPressed = true
-                    jumpBuffer = JUMP_BUFFER_SECONDS
-                }
-                return true
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                leftPressed = false
-                rightPressed = false
-                jumpPressed = false
-                return true
             }
         }
+
+        leftPressed = newLeft
+        rightPressed = newRight
+
         return true
     }
 
@@ -1206,7 +1242,7 @@ class GameView(context: Context, var aiController: AiController?) : View(context
         private const val JUMP_BUFFER_SECONDS = 0.12f
         private const val COYOTE_SECONDS = 0.10f
         private const val AI_CALL_TIMEOUT_NANOS = 2_000_000_000L
-        private const val WALK_ANIMATION_FPS = 9f
+        private const val STRIDE_PIXELS = 360f
         private const val WALK_ANIMATION_MIN_SPEED = 55f
         private const val WALK_BLEND_SECONDS = 0.12f
         private const val MAX_ORB_MAGNET_RADIUS = 480f

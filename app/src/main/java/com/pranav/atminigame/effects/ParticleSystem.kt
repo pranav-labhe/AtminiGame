@@ -90,6 +90,25 @@ class ParticleSystem(private val palette: EffectPalette = EffectPalette()) {
         }
     }
 
+    fun emitFootstepDust(x: Float, y: Float, dir: Float) {
+        val count = Random.nextInt(2, 4)
+        for (i in 0 until count) {
+            val vx = -dir * (Random.nextFloat() * 80f + 20f) + (Random.nextFloat() * 20f - 10f)
+            val vy = -Random.nextFloat() * 40f - 10f
+            val life = Random.nextFloat() * 0.18f + 0.10f
+            val color = if (Random.nextBoolean()) {
+                Color.argb(120, 200, 220, 240)
+            } else {
+                Color.argb(100, 255, 230, 200)
+            }
+            spawn(
+                x + (Random.nextFloat() * 12f - 6f), y,
+                vx, vy, color,
+                Random.nextFloat() * 3f + 2f, life, 0.3f, KIND_SPARK
+            )
+        }
+    }
+
     fun emitVictoryShower(centerX: Float, centerY: Float) {
         for (i in 0 until 120) {
             val angle = Random.nextFloat() * TWO_PI
